@@ -1,0 +1,31 @@
+{
+  "server": {
+    "host": "localhost",
+    "port": 8819
+  },
+  "embedder": {
+    "host": "127.0.0.1",
+    "port": 11434,
+    "model": "nomic-embed-text",
+    "dimension": 384
+  },
+  "qdrant": {
+    "host": "127.0.0.1",
+    "port": 6334,
+    "collection": "oncallagent"
+  },
+  "openai": {
+    "api_key": "your-api-key",
+    "model": "gpt-4o-mini",
+    "api_base": "https://api.chatanywhere.tech/v1",
+    "max_tokens": 2048,
+    "temperature": 0.3
+  },
+  "prometheus": {
+    "url": "http://localhost:9090"
+  },
+  "cls_mcp": {
+    "base_url": "http://localhost:3100/sse",
+    "enabled": true
+  }
+}
