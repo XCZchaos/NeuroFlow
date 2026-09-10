@@ -1,0 +1,12 @@
+{
+  "name": "neuroflow-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EEG, MEG and fNIRS preprocessing agent workspace",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "start": "node scripts/start.cjs",
+    "check": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check renderer/i18n.js && node --check renderer/app.js && node --check scripts/start.cjs"
+  },
+  "devDependencies": { "electron": "^41.0.0" }
+}
