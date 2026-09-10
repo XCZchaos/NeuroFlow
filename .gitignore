@@ -1,0 +1,48 @@
+# Binaries
+/bin/
+/server
+
+# Dependencies
+/vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (sensitive)
+.env
+config.json
+
+# Uploads
+/uploads/
+
+# Logs
+*.log
+*.pid
+
+myapp
+
+# Local development runtimes and downloaded tools
+/.tools/
+.runtime/
+.cache/
+/tmp/
+
+# Python runtime files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local neurophysiology data and generated analysis results
+# Real datasets should stay outside Git. Tiny public test fixtures can be force-added.
+/data/
+/datasets/
+/derivatives/
+/outputs/
