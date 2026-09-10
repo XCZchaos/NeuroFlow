@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http://localhost:8819 http://127.0.0.1:8819; object-src 'none'; base-uri 'none'">
+  <title>NeuroFlow · 神经信号工作台</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- 新视觉主题单独维护，便于修改颜色、间距和组件外观。 -->
+  <link rel="stylesheet" href="theme.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#"><span class="brand-mark">∿</span><span>NeuroFlow<small>NEUROSCIENCE WORKSPACE</small></span></a>
+    <div class="workspace"><span class="workspace-icon">N</span><div>我的研究空间<small>本地工作区</small></div><span class="muted">⌄</span></div>
+    <div class="nav-label">工作空间</div>
+    <nav>
+      <button class="nav-item active" data-view="workspace"><span>▦</span>预处理工作台</button>
+      <button class="nav-item" data-view="datasets"><span>▱</span>数据管理 <b id="dataset-count">1</b></button>
+      <button class="nav-item" data-view="history"><span>◷</span>运行记录</button>
+    </nav>
+    <div class="nav-label template-label">处理模板 <span>03</span></div>
+    <button class="template" data-mode="EEG"><i class="dot green"></i>EEG · 脑电</button>
+    <button class="template" data-mode="MEG"><i class="dot violet"></i>MEG · 脑磁</button>
+    <button class="template" data-mode="fNIRS"><i class="dot amber"></i>fNIRS · 近红外</button>
+    <div class="local-card"><span class="local-symbol">⌁</span><strong>数据留在本地</strong><p>原始文件不会上传。连接 Agent 时，仅发送你的对话与模态信息。</p><span class="local-tag">LOCAL FIRST</span></div>
+    <button class="nav-item settings-trigger"><span>⚙</span>连接设置</button>
+    <div class="profile"><span class="avatar">研</span><div>研究者<small>个人工作区</small></div><span class="profile-dot"></span></div>
+  </aside>
+  <div class="shell">
+    <header class="topbar"><div class="topbar-path"><button class="icon-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏">☰</button><span class="muted">工作空间</span><span class="slash">/</span><strong id="breadcrumb">预处理工作台</strong></div><div class="top-actions"><span class="status-dot" id="backend-dot"></span><span id="connection-status">本地演示模式</span><span class="divider"></span><button class="language-toggle" id="language-toggle" aria-label="切换语言" title="Switch language">EN</button><button class="icon-button" id="theme-toggle" aria-label="切换深浅主题" title="切换主题">☾</button><button class="icon-button settings-trigger" aria-label="连接设置" title="连接设置">⚙</button><span class="avatar small">研</span></div></header>
+    <main>
+      <section class="page-heading"><div><div class="eyebrow">SIGNAL TO INSIGHT</div><h1 id="page-title">让每一段信号，更清晰。</h1><p>从原始数据到分析就绪，用可复现的流程探索神经信号。</p></div><button class="button primary" id="import-top">＋ 导入数据</button></section>
+      <section id="workspace-view">
+        <div class="mode-row"><div class="segmented" role="group" aria-label="数据模态"><button class="selected" data-mode="EEG">EEG <span>脑电</span></button><button data-mode="MEG">MEG <span>脑磁</span></button><button data-mode="fNIRS">fNIRS <span>近红外</span></button></div><span class="subtle">模板可编辑 · 全程保留配置</span></div>
+        <div class="workspace-grid">
+          <div class="main-column">
+            <section class="card dataset-card" id="dropzone"><div class="section-heading"><h2><span class="step-number">01</span> 数据集</h2><span class="pill" id="source-badge">示例数据</span></div><div class="dataset-body"><div class="file-icon">∿</div><div class="file-details"><strong id="file-name">sub-01_task-rest_eeg.edf</strong><p id="file-description">静息态 · 示例信号，用于预览界面</p></div><button class="button light" id="change-file">选择文件</button></div><div class="metadata"><div><span>通道数</span><strong id="meta-channels">64 <small>channels</small></strong></div><div><span>采样率</span><strong id="meta-rate">256 <small>Hz</small></strong></div><div><span>记录时长</span><strong id="meta-duration">05:00 <small>min</small></strong></div><div><span>数据格式</span><strong id="meta-format">EDF</strong></div></div><div class="drop-hint" id="format-hint">支持 .edf / .bdf / .set / .vhdr · 可拖入文件（支持多文件配套数据）</div></section>
+            <section class="card pipeline-card"><div class="section-heading"><h2><span class="step-number">02</span> 预处理流程 <span class="count" id="step-count">5 步</span></h2><button class="text-button" id="reset-pipeline">↺ 重置模板</button></div><div class="pipeline-description">按顺序执行处理步骤。点击参数可编辑，开关控制是否启用。</div><div id="pipeline"></div><div class="pipeline-footer"><span><i class="dot green"></i><span id="enabled-count">5 个步骤已启用</span></span><button class="text-button" id="export-config">↓ 导出配置</button></div></section>
+            <section class="card signal-card"><div class="section-heading"><h2><span class="step-number">03</span> 信号预览 <span class="pill neutral">合成演示</span></h2><div class="signal-tabs"><button class="selected" data-signal="raw">原始</button><button data-signal="processed">处理示意</button></div></div><div class="signal-info"><span id="signal-caption">8 个示例通道 · 10 秒窗口</span><span id="signal-unit">振幅 / μV</span></div><canvas id="signal-canvas" aria-label="合成信号波形预览，并非导入文件的真实信号"></canvas><div class="chart-footer"><span>演示波形不代表导入文件内容或处理效果</span><span>时间 / s</span></div></section>
+          </div>
+          <aside class="agent-column"><section class="card agent-card"><div class="agent-header"><span class="agent-icon">✳</span><div><h2>NeuroFlow Agent</h2><span id="agent-mode">你的预处理助手 · 演示</span></div><span class="sparkle">✧</span></div><div class="agent-context"><i class="dot green"></i>当前上下文 <strong id="context-mode">EEG 预处理</strong></div><div id="messages" class="messages" aria-live="polite"></div><div class="suggestions"><button data-prompt="解释当前预处理流程">解释当前流程 ↗</button><button data-prompt="数据导入后应做哪些质量检查？">质量检查建议 ↗</button></div><form id="chat-form"><label for="chat-input" class="sr-only">向 Agent 提问</label><textarea id="chat-input" placeholder="询问处理步骤，或描述你的研究需求…" rows="3" maxlength="8000"></textarea><div class="composer-footer"><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" id="send-message" aria-label="发送消息">↑</button></div></form><div class="agent-footnote">建议仅供研究参考，处理参数需由研究者确认</div></section><div class="note-card"><span>◇</span><div><strong>可复现，从每一步开始</strong><p>导出流程参数，保留模态、步骤顺序与启用状态，让分析更容易复查。</p></div></div></aside>
+        </div>
+        <div class="run-bar"><div><strong id="run-title">流程已就绪</strong><span id="run-subtitle">演示执行 · 不会处理或修改原始数据</span></div><div class="run-actions"><span id="run-progress">预计演示用时约 5 秒</span><button class="button primary" id="run-button">▷ 运行演示流程</button></div></div>
+      </section>
+      <section id="datasets-view" class="card alternative-view" hidden><div class="section-heading"><h2>本次会话的数据</h2><button class="button primary" id="import-list">＋ 导入数据</button></div><p class="muted">仅保存文件元信息；文件内容尚未解析。刷新或关闭窗口后清空。</p><div id="dataset-list"></div></section>
+      <section id="history-view" class="card alternative-view" hidden><div class="section-heading"><h2>运行记录</h2><span class="pill neutral">本次会话</span></div><div id="history-list"></div></section>
+    </main>
+  </div>
+  <input id="file-input" type="file" multiple hidden>
+  <dialog id="settings-dialog"><form id="settings-form"><div class="section-heading"><h2>Agent 连接设置</h2><button type="button" class="icon-button" id="close-settings" aria-label="关闭">×</button></div><p>可连接当前 Go 项目的 <code>POST /chat</code>。该后端尚未提供 EEG / MEG / fNIRS 处理能力。</p><label class="field-label" for="backend-mode">对话模式</label><select id="backend-mode"><option value="demo">本地演示回复</option><option value="backend">连接 Go 后端</option></select><label class="field-label" for="backend-url">后端地址</label><select id="backend-url"><option value="http://localhost:8819">http://localhost:8819</option><option value="http://127.0.0.1:8819">http://127.0.0.1:8819</option></select><p class="settings-note">连接后会发送对话文字和当前模态，后端可能再发送给其配置的大模型服务。不会自动发送原始文件、文件名或波形。</p><button class="button primary" type="submit">保存设置</button></form></dialog>
+  <div id="toast" role="status" hidden></div>
+  <!-- i18n 必须先于业务脚本加载，后续新增功能统一调用 window.NeuroI18n。 -->
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
