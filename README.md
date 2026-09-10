@@ -1,84 +1,124 @@
 # NeuroFlow
 
 <p align="center">
-  An intelligent neurophysiological signal workbench for EEG, MEG, and fNIRS
+  <strong>An intelligent neurophysiological signal workbench for EEG, MEG, fNIRS, and future multimodal biosignal workflows.</strong>
 </p>
 
 <p align="center">
   <strong>English</strong> · <a href="README_zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go">
+  <img src="https://img.shields.io/badge/Eino-Agent_Framework-5B5BD6" alt="Eino">
+  <img src="https://img.shields.io/badge/Python-MNE-3776AB?logo=python&logoColor=white" alt="Python MNE">
+  <img src="https://img.shields.io/badge/Electron-Desktop-47848F?logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/Qdrant-Vector_DB-DC244C" alt="Qdrant">
+  <img src="https://img.shields.io/github/license/XCZchaos/NeuroFlow" alt="License">
+  <img src="https://img.shields.io/github/stars/XCZchaos/NeuroFlow?style=flat" alt="Stars">
+</p>
+
 ## Overview
 
-**NeuroFlow** is an intelligent Agent workbench for brain-computer interface and neuroscience research. It aims to turn common neurophysiological signal workflows—data import, structure inspection, preprocessing planning, knowledge retrieval, and result interpretation—into a traceable, reviewable, and extensible Agent workflow.
+**NeuroFlow** is an intelligent agent workspace for neurophysiological signal research. It aims to organize the workflow of **data import → metadata inspection → analysis planning → tool execution → quality review → report generation** into an explainable and reproducible agent system.
 
-The project currently uses **Go + CloudWeGo Eino** for Agent orchestration and backend services, **Python + MNE** for deterministic neurophysiological metadata inspection, **Qdrant + Ollama embeddings** for retrieval-augmented generation, and an OpenAI-compatible model service for natural-language interaction.
+The current implementation focuses on three foundations:
 
-The core design principle is simple: **LLMs should understand, plan, select tools, and explain results; deterministic programs should read data and perform numerical computation.**
+- **Trusted local data inspection** — Electron selects local EEG/MEG/fNIRS files, while Python + MNE reads metadata without uploading raw recordings to the LLM.
+- **ReAct Agent** — built with CloudWeGo Eino for tool selection, multi-turn interaction, dataset-aware reasoning, and structured preprocessing drafts.
+- **RAG knowledge layer** — Markdown knowledge is embedded through Ollama and indexed in Qdrant for domain-grounded responses.
 
-> **Current status:** NeuroFlow can inspect supported files, register trusted dataset metadata, invoke tools through a ReAct Agent, retrieve knowledge from a RAG pipeline, and generate structured preprocessing drafts. Real preprocessing operations such as filtering, ICA, bad-channel interpolation, SSS/tSSS, motion correction, and Beer–Lambert conversion are not yet connected to the automatic execution chain. Generated preprocessing workflows are therefore reviewable plans rather than claims that signal processing has already been executed.
+> **Current status:** NeuroFlow can inspect datasets, expose verified metadata to the Agent, retrieve domain knowledge, and generate structured preprocessing plans. It does **not yet** execute a full automatic preprocessing pipeline such as filtering, ICA, bad-channel interpolation, SSS/tSSS, motion correction, or Beer–Lambert conversion. These capabilities are part of the roadmap.
 
-## Key Features
+## Why NeuroFlow?
 
-- **Neurophysiological data inspection** — Python/MNE reads supported EEG, MEG, and fNIRS metadata in read-only mode without modifying the source files.
-- **Dataset context management** — each successfully imported dataset receives a `dataset_id`, allowing the Agent to query program-verified facts instead of guessing them.
-- **ReAct Agent** — built with CloudWeGo Eino and capable of selecting dataset inspection, workflow-planning, and RAG tools based on the user request.
-- **Structured preprocessing drafts** — generate reviewable preprocessing suggestions from modality, task goal, sampling rate, line frequency, and other metadata.
-- **RAG knowledge layer** — Markdown documents are chunked, embedded, and stored in Qdrant for domain-aware retrieval.
-- **Streaming interaction** — SSE endpoints support progressive Agent responses for desktop or web clients.
-- **Local-first data handling** — raw neurophysiological files stay at their original local path and are not uploaded to the knowledge base or directly sent to the LLM.
-- **Extensible Tool layer** — the architecture is prepared for EEG/EMG quality assessment, feature extraction, deep-learning inference, and multimodal analysis tools.
+Traditional biosignal software is usually built around fixed menus and fixed pipelines. NeuroFlow explores a different model: the LLM does **not** replace deterministic signal-processing code. Instead, it acts as a planner and orchestrator that selects verified tools, reasons over structured outputs, and explains results.
+
+```text
+LLM / Agent = understand + plan + select tools + explain
+Signal tools  = calculate + preprocess + validate + infer
+```
+
+This separation is central to NeuroFlow's design.
+
+## Current Capabilities
+
+| Area | Status | Description |
+|---|---|---|
+| Local dataset inspection | ✅ Available | Read format, channels, sampling rate, duration, annotations, modality |
+| Dataset-aware Agent context | ✅ Available | Register datasets with `dataset_id` and query verified metadata |
+| ReAct tool calling | ✅ Available | Eino Agent can choose registered tools during conversation |
+| RAG knowledge retrieval | ✅ Available | Ollama embedding + Qdrant semantic retrieval |
+| Structured preprocessing draft | ✅ Available | Generate reviewable plans without pretending they were executed |
+| SSE streaming chat | ✅ Available | Stream Agent responses to the desktop UI |
+| EEG preprocessing execution | 🚧 Planned | Filtering, notch, referencing, artifact handling, bad channels |
+| EMG analysis tools | 🚧 Planned | RMS, MAV, MDF, MPF, activation and fatigue analysis |
+| Multimodal EEG/EMG Agent | 🚧 Planned | Synchronization, cross-modal analysis, fusion workflow |
+| Automatic analysis reports | 🚧 Planned | Structured metrics, figures, provenance and narrative summary |
 
 ## Architecture
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│                         NeuroFlow                            │
-├──────────────────────────────────────────────────────────────┤
-│ Client / Desktop                                             │
-│  ├─ Data selection and metadata display                     │
-│  ├─ Preprocessing workflow interaction                      │
-│  └─ Agent chat and Markdown rendering                       │
-├──────────────────────────────────────────────────────────────┤
-│ Go API Layer — Gin                                          │
-│  ├─ /datasets/register                                      │
-│  ├─ /datasets/:id                                           │
-│  ├─ /agent/preprocessing/draft                              │
-│  ├─ /chat                                                   │
-│  ├─ /chatStream                                             │
-│  └─ /upload                                                 │
-├──────────────────────────────────────────────────────────────┤
-│ Agent Layer — CloudWeGo Eino                                │
-│  ├─ ReAct Agent                                             │
-│  ├─ inspect_dataset Tool                                    │
-│  ├─ create_neuro_preprocessing_draft Tool                   │
-│  └─ RAG Tool                                                │
-├──────────────────────────────────────────────────────────────┤
-│ Analysis & Knowledge                                        │
-│  ├─ Python + MNE        signal format adapter / inspection  │
-│  ├─ Qdrant             vector database                      │
-│  ├─ Ollama             embedding service                    │
-│  └─ OpenAI-compatible LLM                                   │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    UI[Electron Desktop Workbench] --> API[Gin HTTP / SSE API]
+    API --> AGENT[CloudWeGo Eino Agent]
+
+    AGENT --> DATA[Dataset Tools]
+    AGENT --> PLAN[Preprocessing Draft Tool]
+    AGENT --> RAG[RAG Tool]
+
+    DATA --> MNE[Python + MNE]
+    RAG --> QD[Qdrant]
+    RAG --> OLLAMA[Ollama Embeddings]
+
+    AGENT --> LLM[OpenAI-Compatible LLM]
+
+    subgraph Future Analysis Layer
+      EEG[EEG Tools]
+      EMG[EMG Tools]
+      FUSION[Multimodal Fusion]
+      MODEL[Deep Learning Inference]
+    end
+
+    AGENT -. roadmap .-> EEG
+    AGENT -. roadmap .-> EMG
+    AGENT -. roadmap .-> FUSION
+    AGENT -. roadmap .-> MODEL
 ```
+
+## Agent Workflow
+
+```mermaid
+flowchart LR
+    A[User Question / Dataset] --> B[Inspect Dataset]
+    B --> C{Task Type}
+    C -->|Metadata| D[Return Verified Facts]
+    C -->|How to process| E[Retrieve Knowledge]
+    E --> F[Generate Structured Plan]
+    F --> G[Human Review]
+    G -. future .-> H[Execute Signal Tools]
+    H -. future .-> I[Validate Results]
+    I -. future .-> J[Generate Report]
+```
+
+The long-term target is a workflow where complex tasks can use **Direct Tool Calling**, **ReAct**, or **Plan–Execute–Replan** depending on task complexity.
 
 ## Tech Stack
 
-| Layer | Technologies |
+| Layer | Technology |
 |---|---|
-| Backend | Go 1.25+, Gin |
+| Desktop | Electron, HTML, CSS, JavaScript |
+| Backend | Go, Gin |
 | Agent | CloudWeGo Eino, ReAct, Tool Calling |
+| Neuro data | Python, MNE-Python |
+| RAG | Qdrant, Ollama, Markdown chunking |
 | LLM | OpenAI-compatible API |
-| RAG | Eino Retriever, Qdrant |
-| Embeddings | Ollama, `nomic-embed-text` |
-| Neuro Signal I/O | Python 3.9+, MNE-Python |
-| Protocol / Integration | HTTP, SSE, MCP |
-| Client | Electron / Web client integration |
-| Languages | Go, Python, JavaScript, HTML, CSS |
+| Streaming | Server-Sent Events (SSE) |
+| Protocol | MCP support in dependencies |
+
+> The current repository uses **Gin**, not GoFrame, as the HTTP framework.
 
 ## Supported Data Formats
-
-The current inspection service is based on MNE-Python and selects a reader according to the file extension.
 
 | Modality | Format | Extension | MNE Reader |
 |---|---|---|---|
@@ -90,15 +130,25 @@ The current inspection service is based on MNE-Python and selects a reader accor
 | EEG | Neuroscan | `.cnt` | `read_raw_cnt` |
 | EEG | EGI | `.egi`, `.mff` | `read_raw_egi` |
 | EEG / MEG | MNE FIF | `.fif` | `read_raw_fif` |
-| MEG | KIT/Yokogawa | `.con`, `.sqd` | `read_raw_kit` |
-| MEG | CTF | `.ds` | `read_raw_ctf` |
+| MEG | KIT / Yokogawa | `.con`, `.sqd` | `read_raw_kit` |
+| MEG | CTF | `.ds` directory | `read_raw_ctf` |
 | fNIRS | SNIRF | `.snirf` | `read_raw_snirf` |
 
-> BrainVision datasets must keep their companion `.vmrk` and `.eeg` files. Externally stored EEGLAB datasets must keep their corresponding `.fdt` files. A CTF `.ds` reader adapter is reserved, while client-side directory selection still needs further work.
+BrainVision datasets should keep the matching `.vmrk` and `.eeg` files. EEGLAB datasets using external storage should keep the matching `.fdt` file.
 
 ## Quick Start
 
-### 1. Clone the repository
+### Prerequisites
+
+- Windows 10/11 is the primary development environment
+- Go 1.25+
+- Python 3.9+ with MNE-Python
+- Node.js + npm
+- Ollama
+- Qdrant
+- An OpenAI-compatible LLM API
+
+### 1. Clone
 
 ```bash
 git clone https://github.com/XCZchaos/NeuroFlow.git
@@ -111,21 +161,27 @@ cd NeuroFlow
 python -m pip install -r neuro_service/requirements.txt
 ```
 
-### 3. Prepare the Ollama embedding model
+### 3. Install desktop dependencies
+
+```powershell
+cd desktop
+npm.cmd install
+cd ..
+```
+
+### 4. Prepare the embedding model
 
 ```bash
 ollama pull nomic-embed-text
 ```
 
-### 4. Start Qdrant
-
-Make sure the Qdrant gRPC service is available at `127.0.0.1:6334`. You can also run it with Docker:
+### 5. Start Qdrant
 
 ```bash
 docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
 ```
 
-### 5. Create a local configuration
+### 6. Create local configuration
 
 Windows PowerShell:
 
@@ -133,68 +189,52 @@ Windows PowerShell:
 Copy-Item config/config_template.json config/config.json
 ```
 
-Linux / macOS:
+Linux/macOS:
 
 ```bash
 cp config/config_template.json config/config.json
 ```
 
-Edit `config/config.json` and provide your own model name, API key, and OpenAI-compatible API base. Do not commit real credentials.
+Fill in your API key, model name, and OpenAI-compatible API base URL. `config/config.json` is ignored by Git and should never contain credentials that are committed to the repository.
 
-Example:
-
-```json
-{
-  "server": {"host": "localhost", "port": 8819},
-  "embedder": {
-    "host": "127.0.0.1",
-    "port": 11434,
-    "model": "nomic-embed-text",
-    "dimension": 384
-  },
-  "qdrant": {
-    "host": "127.0.0.1",
-    "port": 6334,
-    "collection": "neuroflow"
-  },
-  "openai": {
-    "api_key": "your-api-key",
-    "model": "your-model",
-    "api_base": "https://api.openai.com/v1"
-  }
-}
-```
-
-### 6. Start the Go backend
+### 7. Start the Go backend
 
 ```bash
 go run ./cmd
 ```
 
-Default service address:
+The service starts on `http://localhost:8819` by default.
+
+### 8. Start Electron
+
+```powershell
+cd desktop
+npm.cmd start
+```
+
+After importing a dataset, try questions such as:
 
 ```text
-http://localhost:8819
+How many channels are in this file?
+What is the sampling rate?
+Create an EEG preprocessing draft for resting-state spectral analysis.
 ```
 
-## API Examples
-
-### Health Check
+## Core API
 
 ```http
-GET /ping
+GET  /ping
+POST /datasets/register
+GET  /datasets/{dataset_id}
+POST /agent/preprocessing/draft
+POST /chat
+POST /chatStream
+POST /upload
 ```
+
+Example dataset registration:
 
 ```json
-{"message":"pong"}
-```
-
-### Register and Inspect a Dataset
-
-```http
-POST /datasets/register
-Content-Type: application/json
-
 {
   "path": "D:\\NeuroData\\subject01.gdf"
 }
@@ -216,180 +256,107 @@ Example response:
 }
 ```
 
-### Query Dataset Metadata
-
-```http
-GET /datasets/{dataset_id}
-```
-
-At the moment, dataset metadata is stored in the Go process memory. Datasets must therefore be registered again after a backend restart.
-
-### Generate a Preprocessing Draft
-
-```http
-POST /agent/preprocessing/draft
-Content-Type: application/json
-
-{
-  "modality": "EEG",
-  "goal": "resting-state spectral analysis",
-  "sampling_rate": 250,
-  "line_frequency": 50
-}
-```
-
-This endpoint returns a structured proposal and does not execute the preprocessing operations.
-
-### Agent Chat
-
-```http
-POST /chat
-Content-Type: application/json
-
-{
-  "question": "How many channels are in this dataset?",
-  "id": "session-id"
-}
-```
-
-### Streaming Chat
-
-```http
-POST /chatStream
-Content-Type: application/json
-
-{
-  "question": "Explain the recommended EEG preprocessing steps",
-  "id": "session-id"
-}
-```
-
-The response is delivered through Server-Sent Events (SSE).
-
-### Index Knowledge Documents
-
-```http
-POST /upload
-Content-Type: multipart/form-data
-
-file: <markdown-file>
-```
-
-This endpoint indexes Markdown knowledge documents. It is not intended for uploading raw EEG, MEG, or fNIRS recordings.
-
-## Repository Structure
+## Project Structure
 
 ```text
 NeuroFlow/
-├── cmd/                            # Go service entry point
-├── config/                         # Local configuration templates
-├── desktop/                        # Client-related files
+├── cmd/                         # Go service entry
+├── config/                      # Local configuration templates
+├── desktop/                     # Electron desktop application
 ├── internal/
-│   ├── handler/                    # Gin HTTP handlers
-│   ├── repo/qrdant/                # Qdrant repository layer
-│   ├── router/                     # API routing
+│   ├── handler/                 # HTTP handlers
+│   ├── repo/qrdant/             # Qdrant repository layer
+│   ├── router/                  # API routes
 │   └── server/
-│       ├── ai/agent/chat/          # Eino ReAct Agent
-│       ├── ai/tools/               # Agent tools
-│       ├── chatServer/             # Sessions and streaming responses
-│       ├── dataset/                # Dataset context registry
-│       └── knowledge_index/        # RAG indexing service
-├── neuro_service/                  # Python/MNE signal adapter
-├── pkg/                            # Config, logging, utilities
-├── prometheusTestServer/           # Prometheus test service
-├── prometheus_config/              # Prometheus configuration
-├── scripts/                        # Helper scripts
+│       ├── ai/agent/chat/       # ReAct Agent
+│       ├── ai/tools/            # Agent tools
+│       ├── chatServer/          # Chat / SSE service
+│       ├── dataset/             # Dataset registry
+│       └── knowledge_index/     # RAG indexing
+├── neuro_service/               # Python / MNE adapters
+├── pkg/                         # Shared utilities
+├── scripts/                     # Helper scripts
 ├── go.mod
 └── go.sum
 ```
 
 ## Design Principles
 
-### 1. Trusted Data First
-
-The Agent should never infer sampling rate, channel count, duration, or file format from language-model priors. These facts must come from deterministic tools such as `inspect_dataset`.
-
-### 2. LLMs Do Not Perform Numerical Signal Processing
-
-Filtering, PSD, time-frequency analysis, RMS, MDF, model inference, and similar operations should be implemented as independent tools or algorithm services. The Agent should select, parameterize, and orchestrate them.
-
-### 3. Suggestions Must Be Distinguished from Executed Results
-
-Until a real algorithm execution chain is connected, NeuroFlow explicitly separates preprocessing recommendations, knowledge explanations, and verified computation results.
-
-### 4. Local-First Raw Data Handling
-
-Neurophysiological recordings can be large and potentially sensitive. NeuroFlow exposes only the structured metadata required by the Agent rather than sending entire raw recordings to an LLM by default.
-
-## Extending NeuroFlow
-
-### Add a New Data Format
-
-Extend the reader mapping in `neuro_service/inspect_dataset.py` and keep the returned JSON schema consistent.
-
-### Add a New Agent Tool
-
-Deterministic EEG/EMG/MEG/fNIRS capabilities should be exposed as Eino tools. Future examples include:
-
-```text
-inspect_dataset
-check_signal_quality
-calculate_psd
-calculate_bandpower
-calculate_emg_rms
-calculate_emg_mdf
-run_model_inference
-```
-
-Tools should return structured and verifiable outputs. The LLM should not generate and execute arbitrary Python or shell code as part of the normal analysis path.
-
-### Extend the Knowledge Base
-
-Algorithm notes, device documentation, experimental protocols, literature notes, and other Markdown resources can be indexed so the RAG layer can provide domain evidence to the Agent.
+1. **Verified data over hallucinated facts** — metadata must come from deterministic readers, not the LLM.
+2. **Tools perform calculations** — numerical signal analysis belongs in Python/C++/Go tools, not free-form model reasoning.
+3. **Explicit provenance** — distinguish observed facts, recommended steps, and actually executed results.
+4. **Local-first raw data** — raw neurophysiological recordings should remain local unless the user explicitly chooses otherwise.
+5. **Human review for scientific workflows** — generated preprocessing plans are drafts until validated and executed.
 
 ## Roadmap
 
-- [x] Go + Gin API service
-- [x] CloudWeGo Eino ReAct Agent
-- [x] Dataset registration and trusted metadata querying
-- [x] MNE-Python multi-format inspection
-- [x] Qdrant + Ollama RAG foundation
-- [x] SSE streaming chat
-- [ ] EEG signal-quality assessment tools
-- [ ] Executable EEG preprocessing pipeline
-- [ ] EMG support and feature-analysis tools
-- [ ] PSD / band-power / time-frequency tools
-- [ ] Multimodal EEG/EMG Agent workflow
+### Phase 1 — Trusted Workspace
+- [x] Local dataset import
+- [x] MNE metadata inspection
+- [x] Dataset registry
+- [x] ReAct Agent
+- [x] RAG knowledge retrieval
+- [x] SSE streaming
+
+### Phase 2 — Deterministic EEG / EMG Tools
+- [ ] EEG quality metrics
+- [ ] Band-pass and notch filters
+- [ ] Referencing and bad-channel handling
+- [ ] PSD / band power / time-frequency analysis
+- [ ] EMG preprocessing
+- [ ] RMS / MAV / MDF / MPF
+- [ ] Structured tool-result schema and validator
+
+### Phase 3 — Multimodal Agent
+- [ ] EEG Agent
+- [ ] EMG Agent
+- [ ] Quality Agent
+- [ ] Supervisor / Router Agent
+- [ ] EEG–EMG synchronization
+- [ ] Fusion and cross-modal analysis
+- [ ] Plan–Execute–Replan workflow
+
+### Phase 4 — Intelligent Analysis Platform
 - [ ] Deep-learning inference tools
-- [ ] Supervisor / Multi-Agent orchestration
-- [ ] Result validation and automated reports
-- [ ] Complete desktop interaction and visualization
+- [ ] BIDS-aware dataset parsing
+- [ ] Reproducible analysis provenance
+- [ ] Automatic figures and reports
+- [ ] Public EEG/EMG benchmark workflows
 
-## Intended Use
+## Recommended Public Test Data
 
-NeuroFlow is currently best suited as:
+For future EEG/EMG integration tests, NeuroFlow can be evaluated on public datasets such as motor-imagery EEG datasets and datasets containing synchronized EEG/EMG recordings. The test suite should evaluate not only model accuracy, but also:
 
-- an engineering playground for neurophysiological signal Agents,
-- an EEG/MEG/fNIRS inspection and preprocessing-planning tool,
-- an example of Eino + RAG + Tool Calling for biosignal applications,
-- a foundation for future multimodal EEG/EMG intelligent analysis workflows.
+- correct dataset recognition
+- correct tool selection
+- parameter validation
+- multi-turn dataset context
+- structured outputs
+- error recovery
+- reproducibility of the analysis path
 
-NeuroFlow is **not a clinical diagnostic tool**.
+## Development Checks
+
+```bash
+go test ./internal/server/dataset ./internal/handler ./internal/server/ai/tools ./internal/server/ai/agent/chat
+python -m py_compile neuro_service/inspect_dataset.py
+```
+
+```powershell
+cd desktop
+npm.cmd run check
+```
 
 ## Contributing
 
-Issues and pull requests are welcome, especially for:
+Issues, discussions, research collaboration, BCI competitions, signal-processing modules, Agent workflows, and open-source contributions are welcome.
 
-- new neurophysiological data adapters,
-- EEG/EMG/MEG/fNIRS analysis tools,
-- RAG and knowledge-base improvements,
-- Agent workflow and Multi-Agent designs,
-- bug fixes and documentation improvements.
+When adding a new analysis tool, prefer a deterministic interface with explicit input/output schemas. Avoid letting an LLM generate arbitrary Python or shell commands for direct execution.
 
 ## License
 
-See the repository `LICENSE` file for licensing information.
+This project is released under the license included in [LICENSE](LICENSE).
 
----
+## Disclaimer
 
-If you are interested in **BCI, neuroengineering, biosignal processing, Agent systems, or multimodal intelligent analysis**, contributions and collaborations are welcome.
+NeuroFlow is a research and engineering project. It is **not a medical device** and should not be used for clinical diagnosis or treatment decisions.
