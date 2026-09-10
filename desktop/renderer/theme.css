@@ -1,0 +1,64 @@
+/* NeuroFlow 视觉主题：本文件只调整外观，不改变数据和 Agent 逻辑。 */
+:root{--nf-primary:#0f766e;--nf-hover:#0b665f;--nf-soft:#e8f5f1;--nf-ink:#18332e;--nf-text:#536b63;--nf-subtle:#7e918b;--nf-line:#dfe9e5;--nf-shadow:0 12px 38px rgba(35,75,65,.08);--nf-radius:16px}
+body{color:var(--nf-ink);background:radial-gradient(circle at 78% -10%,rgba(129,210,187,.18),transparent 31%),linear-gradient(180deg,#f7faf9,#f2f6f5);font-size:14px}
+
+/* 深色导航区把操作入口与主要科研内容明确分开。 */
+.sidebar{width:240px;padding:28px 20px 20px;color:#d9ebe5;background:linear-gradient(180deg,#173e37,#102f2a);border:0;box-shadow:12px 0 36px rgba(20,54,47,.08)}
+.shell{margin-left:240px}.brand{color:#fff;font-size:22px;letter-spacing:-.4px}.brand-mark{background:linear-gradient(145deg,#40b994,#14806d);box-shadow:0 8px 20px rgba(31,163,129,.3)}
+.brand small,.sidebar .nav-label,.sidebar .muted,.profile small{color:#86aaa0}.workspace{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.09)}.workspace-icon{background:rgba(69,190,153,.16);color:#77d0b4}
+.nav-item{color:#a9c5bc;border:1px solid transparent}.nav-item:hover:not(:disabled),.template:hover{background:rgba(255,255,255,.06);color:#fff;filter:none}.nav-item.active{background:linear-gradient(90deg,rgba(55,183,145,.22),rgba(55,183,145,.08));border-color:rgba(95,210,174,.13);color:#effff9}.nav-item b{background:rgba(255,255,255,.11);color:#bfe3d7}.template{color:#a9c5bc;border-radius:9px;width:100%}
+.local-card{background:linear-gradient(145deg,rgba(49,155,127,.18),rgba(255,255,255,.05));border:1px solid rgba(123,213,187,.11);color:#d9eee7}.local-card p{color:#91b6aa}.local-tag{color:#6bc7aa}.profile{border-color:rgba(255,255,255,.1)}
+
+/* 半透明顶栏在页面滚动时保留当前位置和连接状态。 */
+.topbar{height:74px;position:sticky;top:0;z-index:5;padding:0 36px;background:rgba(249,252,251,.84);border-color:rgba(213,226,221,.85);backdrop-filter:blur(16px)}
+.top-actions{background:#fff;border:1px solid var(--nf-line);padding:6px 8px 6px 12px;border-radius:999px}.status-dot{box-shadow:0 0 0 4px rgba(57,163,132,.12)}
+main{max-width:1580px;padding:38px}.page-heading{margin-bottom:32px}.eyebrow{color:var(--nf-primary);font-weight:700;letter-spacing:2.4px}h1{color:#163b33;font-size:31px;line-height:1.25;letter-spacing:-1px}.page-heading p{font-size:13px;color:var(--nf-subtle)}
+
+/* 统一卡片、按钮和模态切换器的圆角、阴影与交互反馈。 */
+.card{background:rgba(255,255,255,.93);border-color:rgba(211,225,219,.9);border-radius:var(--nf-radius);box-shadow:var(--nf-shadow);backdrop-filter:blur(8px)}
+.button{border-radius:9px;padding:10px 17px;transition:transform .18s,box-shadow .18s,background .18s}.button:hover:not(:disabled){transform:translateY(-1px);filter:none}.button.primary{background:linear-gradient(135deg,#168875,var(--nf-primary));border-color:transparent;box-shadow:0 7px 18px rgba(15,118,110,.2)}.button.primary:hover:not(:disabled){background:linear-gradient(135deg,#117b6b,var(--nf-hover));box-shadow:0 9px 23px rgba(15,118,110,.27)}.button.light{color:var(--nf-primary);border-color:#d6e7e1;background:#fafffd}
+.segmented{padding:5px;border-radius:11px;background:#e7efec}.segmented button{border-radius:8px;padding:10px 25px}.segmented button.selected{color:var(--nf-primary);box-shadow:0 4px 12px rgba(28,78,65,.08)}.step-number{border:0;background:var(--nf-soft);color:var(--nf-primary);padding:5px 7px}.pill{border:0;padding:5px 8px;border-radius:999px}
+
+/* 数据集信息使用独立指标块，方便快速核对通道、采样率和时长。 */
+.dataset-card,.pipeline-card,.signal-card{padding-left:24px;padding-right:24px;padding-top:23px}.dataset-body{margin-top:23px;padding:14px;border-radius:12px;background:linear-gradient(90deg,#f5faf7,#fbfdfc)}.file-icon{width:44px;height:48px;border:0;border-radius:11px;background:#dff2ea;color:var(--nf-primary)}.file-details strong{color:#29473f;font-size:13px}
+.metadata{gap:9px;margin:20px 0}.metadata>div,.metadata>div:first-child{border:0;padding:12px 13px;border-radius:10px;background:#f7faf9}.metadata span{margin-bottom:7px}.metadata strong{color:#244a3f;font-size:17px}.drop-hint{color:#8a9b95;padding:14px 0}
+
+/* 流程步骤在鼠标经过时突出，提醒用户这里可以编辑。 */
+.pipeline-description{font-size:11px}.pipeline-step{gap:13px}.step-index{width:24px;height:24px;border:0;background:#e3f3ed;color:var(--nf-primary);font-weight:700}.pipeline-step:not(:last-child):before{left:12px;background:#dceae5}.step-content{border-color:#e3ece8;border-radius:10px;padding:13px 14px;transition:border-color .18s,box-shadow .18s,transform .18s}.step-content:hover{border-color:#bfdad0;box-shadow:0 7px 20px rgba(36,91,74,.06);transform:translateY(-1px)}.step-top strong{color:#33564b;font-size:12px}.param-input{border-radius:6px;padding:6px 7px}.pipeline-footer{padding:16px 0}
+.signal-tabs{background:#f2f6f4;border:0;border-radius:8px;padding:3px}.signal-tabs button{border-radius:6px;padding:6px 11px}canvas{height:210px}
+
+/* Agent 区采用现代聊天界面：更大的阅读区、消息层级和聚焦输入框。 */
+.workspace-grid{grid-template-columns:minmax(480px,1fr) 370px;gap:25px}.agent-column{position:sticky;top:98px}.agent-card{border-radius:18px;box-shadow:0 16px 46px rgba(28,75,62,.11)}.agent-header{padding:20px;background:linear-gradient(135deg,#f5fbf8,#edf7f3)}.agent-icon{background:linear-gradient(145deg,#dff3ea,#cceade);color:var(--nf-primary)}.agent-header h2{color:#23483d;font-size:14px}.agent-context{padding:12px 20px}.messages{height:440px;padding:21px 20px}.message{margin-bottom:22px}.message-body{font-size:12px;color:var(--nf-text)}.message.user .message-body{margin-left:22px;background:linear-gradient(135deg,#e9f6f0,#e2f2eb);padding:11px 13px;border-radius:12px 12px 3px 12px}
+.suggestions{padding:0 18px 13px}.suggestions button{border-radius:999px;padding:7px 11px;color:#54796b;background:#fbfdfc}#chat-form{margin:0 16px;padding:11px;border-radius:12px;border-color:#cfe0da;box-shadow:0 5px 18px rgba(28,80,65,.06)}#chat-form:focus-within{border-color:#77b9a5;box-shadow:0 0 0 3px rgba(74,163,137,.1)}textarea{font-size:12px;min-height:70px}#send-message{width:30px;height:30px;border-radius:8px;box-shadow:0 5px 12px rgba(15,118,110,.23)}.note-card{border-radius:13px;padding:18px}
+.run-bar{border-radius:14px;padding:19px 23px;box-shadow:0 9px 26px rgba(30,73,61,.06)}.alternative-view{min-height:420px;padding:28px}dialog{border-radius:17px;border:0;box-shadow:0 28px 100px rgba(12,50,40,.25)}#toast{border-radius:999px;box-shadow:0 12px 35px rgba(15,56,45,.25)}
+
+/* 窄窗口逐级切换布局，普通笔记本也不会挤压对话区。 */
+@media(max-width:1280px){.sidebar{width:210px}.shell{margin-left:210px}.workspace-grid{grid-template-columns:minmax(420px,1fr) 330px}main{padding-left:27px;padding-right:27px}}
+@media(max-width:1020px){.sidebar{width:178px;padding-left:14px;padding-right:14px}.shell{margin-left:178px}.workspace-grid{grid-template-columns:1fr}.agent-column{position:static}.messages{height:330px}.metadata{grid-template-columns:repeat(2,1fr)}}
+
+/* 流式回答开始前的思考动画；收到第一个文本片段后由 app.js 自动移除。 */
+.thinking .message-body{min-height:28px;display:flex;align-items:center}.thinking-indicator{display:flex;align-items:center;gap:4px;color:#81958e}.thinking-indicator span{width:6px;height:6px;border-radius:50%;background:#43a487;animation:nf-thinking 1.2s infinite ease-in-out}.thinking-indicator span:nth-child(2){animation-delay:.16s}.thinking-indicator span:nth-child(3){animation-delay:.32s}.thinking-indicator em{font-style:normal;font-size:11px;margin-left:5px}.message.assistant:not(.thinking) .message-body::after{content:"";display:inline-block;width:0}
+@keyframes nf-thinking{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
+@media(prefers-reduced-motion:reduce){.thinking-indicator span{animation:none;opacity:.65}}
+
+/* 顶栏工具、连接状态和消息操作。 */
+.topbar-path{display:flex;align-items:center;gap:3px}.topbar-path #sidebar-toggle{margin-right:8px;color:#58736b}.status-dot[data-status="online"]{background:#2ca77d}.status-dot[data-status="checking"]{background:#e2aa45;animation:nf-pulse 1.2s infinite}.status-dot[data-status="offline"]{background:#d86666;box-shadow:0 0 0 4px rgba(216,102,102,.12)}.status-dot[data-status="demo"]{background:#8ba39b;box-shadow:none}
+.message-actions{height:18px;margin:-7px 0 0 24px;opacity:0;transition:opacity .18s}.message:hover .message-actions,.message:focus-within .message-actions{opacity:1}.message-action{border:0;background:transparent;color:#879a93;font-size:9px;padding:2px 5px;border-radius:5px}.message-action:hover{background:#edf4f1;color:var(--nf-primary)}
+#send-message{transition:transform .16s,background .16s}#send-message:hover{transform:scale(1.04)}
+@keyframes nf-pulse{50%{opacity:.4;transform:scale(.82)}}
+
+/* 折叠侧栏后只保留图标，给信号图和 Agent 对话腾出更多宽度。 */
+.sidebar,.shell{transition:width .22s,margin-left .22s}.sidebar-collapsed .sidebar{width:76px;padding-left:14px;padding-right:14px}.sidebar-collapsed .shell{margin-left:76px}.sidebar-collapsed .brand>span:last-child,.sidebar-collapsed .workspace>div,.sidebar-collapsed .workspace>.muted,.sidebar-collapsed .nav-label,.sidebar-collapsed .nav-item:not(.settings-trigger){font-size:0}.sidebar-collapsed .nav-item>span{font-size:19px}.sidebar-collapsed .nav-item b,.sidebar-collapsed .template:not(.selected),.sidebar-collapsed .local-card,.sidebar-collapsed .profile>div,.sidebar-collapsed .profile-dot{display:none}.sidebar-collapsed .template{font-size:0;justify-content:center}.sidebar-collapsed .template .dot{width:10px;height:10px}.sidebar-collapsed .workspace{justify-content:center;padding:10px 5px;margin-top:25px}.sidebar-collapsed .workspace-icon{padding:7px}.sidebar-collapsed .nav-item{justify-content:center;padding-left:8px;padding-right:8px}.sidebar-collapsed .profile{justify-content:center}
+
+/* 深色主题覆盖核心表面；不改变图表语义颜色和模态颜色。 */
+:root[data-theme="dark"]{--nf-ink:#e1eee9;--nf-text:#b8cbc4;--nf-subtle:#819a91;--nf-line:#294940;--nf-soft:#173f36;--nf-shadow:0 14px 42px rgba(0,15,12,.25);color-scheme:dark}
+:root[data-theme="dark"] body{background:radial-gradient(circle at 78% -10%,rgba(35,126,102,.2),transparent 34%),linear-gradient(180deg,#11221e,#0c1b18);color:var(--nf-ink)}
+:root[data-theme="dark"] .topbar{background:rgba(15,31,27,.84);border-color:#27443c}:root[data-theme="dark"] .top-actions,:root[data-theme="dark"] .card,:root[data-theme="dark"] .run-bar{background:rgba(20,41,36,.94);border-color:#294940}:root[data-theme="dark"] h1,:root[data-theme="dark"] .section-heading h2,:root[data-theme="dark"] .file-details strong,:root[data-theme="dark"] .metadata strong,:root[data-theme="dark"] .step-top strong,:root[data-theme="dark"] .agent-header h2{color:#d8eae4}
+:root[data-theme="dark"] .dataset-body,:root[data-theme="dark"] .metadata>div,:root[data-theme="dark"] .metadata>div:first-child,:root[data-theme="dark"] .step-content,:root[data-theme="dark"] #chat-form,:root[data-theme="dark"] select,:root[data-theme="dark"] .param-input{background:#172e28;border-color:#294a41;color:#c2d5ce}:root[data-theme="dark"] .agent-header,:root[data-theme="dark"] .agent-context{background:linear-gradient(135deg,#18352e,#142c27);border-color:#294940}:root[data-theme="dark"] .message.user .message-body{background:linear-gradient(135deg,#19483b,#173d34);color:#d0e6de}:root[data-theme="dark"] .suggestions button,:root[data-theme="dark"] .button.light{background:#18332c;border-color:#2b5147;color:#9fd0c0}:root[data-theme="dark"] textarea{color:#d0e2dc}:root[data-theme="dark"] canvas{filter:brightness(.8) contrast(1.08)}:root[data-theme="dark"] dialog{background:#142a25;color:#dcebe6}:root[data-theme="dark"] .markdown strong,:root[data-theme="dark"] .markdown h1,:root[data-theme="dark"] .markdown h2,:root[data-theme="dark"] .markdown h3{color:#d8eae4}:root[data-theme="dark"] .markdown code{background:#1d3b33;color:#9ad6c1}
+.sidebar-collapsed .nav-item{font-size:0}.sidebar-collapsed .nav-item>span{font-size:19px}
+
+/* 中英文切换按钮使用文字而非国旗，避免语言与国家概念混淆。 */
+.language-toggle{min-width:30px;height:27px;padding:0 7px;border:1px solid #d9e6e1;border-radius:7px;background:#f7fbf9;color:#3e6d5f;font-size:9px;font-weight:750;letter-spacing:.4px}.language-toggle:hover{background:#e9f5f0;border-color:#bcd8ce}:root[data-theme="dark"] .language-toggle{background:#18352e;border-color:#315249;color:#a9d5c7}
+
+/* 导航的第一个 span 是图标；i18n-text 是正文，必须允许按中文词组自然占宽。 */
+.nav-item>.i18n-text{width:auto;min-width:0;flex:1;font-size:12px;line-height:1.35;white-space:nowrap;text-align:left}.section-heading h2>.i18n-text,.agent-context>.i18n-text{width:auto;font-size:inherit;white-space:nowrap}.sidebar-collapsed .nav-item>.i18n-text{display:none}
