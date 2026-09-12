@@ -73,7 +73,6 @@ func TestInitConfigFromFileNotFound(t *testing.T) {
 	}
 }
 
-
 func TestGetServerAddr(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{Host: "localhost", Port: 8080},
@@ -88,7 +87,7 @@ func TestGetEmbedderAddr(t *testing.T) {
 	cfg := &Config{
 		Embedder: EmbedderConfig{Host: "embedder", Port: 11434},
 	}
-	expected := "embedder:11434"
+	expected := "http://embedder:11434"
 	if addr := cfg.GetEmbedderAddr(); addr != expected {
 		t.Errorf("Expected GetEmbedderAddr()=%s, got %s", expected, addr)
 	}

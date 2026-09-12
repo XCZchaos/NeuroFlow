@@ -2,7 +2,7 @@ package handler
 
 import (
 	"OnCallAgent/internal/server/chatServer"
-	"fmt"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,65 +22,67 @@ func NewChatHandler(chat chatServer.ChatServer) ChatHandler {
 
 type ChatRequest struct {
 	Question string `json:"question" binding:"required"`
-	Id       string `json:"id" binding:"required"` // 会话id
+	ID       string `json:"id" binding:"required"`
 }
 
 func (c *chatHandler) Chat() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		var chatRequest ChatRequest
-		if err := ctx.ShouldBindJSON(&chatRequest); err != nil {
-			ctx.JSON(400, gin.H{"message": "invalid request"})
-			return
-		}
-		msg, err := c.chat.Chat(ctx.Request.Context(), chatRequest.Question, chatRequest.Id)
-		if err != nil {
-			ctx.JSON(400, gin.H{
-				"message": "对话失败",
+		var request ChatRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": "question 和 id 是必填字段",
 			})
 			return
 		}
-		ctx.JSON(200, gin.H{
-			"message": msg,
-		})
+
+		message, err := c.chat.Chat(ctx.Request.Context(), request.Question, request.ID)
+		if err != nil {
+			ctx.JSON(http.StatusBadGateway, gin.H{
+				"code":    "AGENT_CALL_FAILED",
+				"message": "Agent 调用失败，请检查模型服务和后端日志",
+			})
+			return
+		}
+		ctx.JSON(http.StatusOK, gin.H{"message": message})
 	}
 }
 
 func (c *chatHandler) ChatSream() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		ctx.Header("Content-Type", "text/event-stream")
-		ctx.Header("Cache-Control", "no-cache")
-		ctx.Header("Connection", "keep-alive")
-		var chatRequest ChatRequest
-		if err := ctx.ShouldBindJSON(&chatRequest); err != nil {
-			ctx.JSON(400, gin.H{"message": "invalid request"})
+		var request ChatRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"code":    "INVALID_REQUEST",
+				"message": "question 和 id 是必填字段",
+			})
 			return
 		}
 
-		// 带缓冲 channel，避免 goroutine 在客户端断开后仍阻塞在写入
-		ch := make(chan string, 8)
-		done := make(chan struct{})
+		ctx.Header("Content-Type", "text/event-stream")
+		ctx.Header("Cache-Control", "no-cache")
+		ctx.Header("Connection", "keep-alive")
 
-		go c.chat.ChatSream(ctx.Request.Context(), chatRequest.Question, chatRequest.Id, &ch, &done)
+		messages := make(chan string, 8)
+		done := make(chan struct{}, 1)
+		errors := make(chan error, 1)
+		go func() {
+			errors <- c.chat.ChatSream(ctx.Request.Context(), request.Question, request.ID, &messages, &done)
+		}()
 
-		for {
-			// 每次循环前，先看一眼 done 有没有动静
-			select {
-			case <-done:
-				return
-			default:
-			}
-			t, ok := <-ch
-			if !ok {
-				// channel 已关闭，goroutine 正常结束
-				ctx.SSEvent("message", "data: [DONE]\n\n")
-				ctx.Writer.Flush()
-				return
-			}
-			// SSE 数据格式要求（重要！）
-			event := fmt.Sprintf("data: %v\n\n", t)
-			// 发送数据到客户端
-			ctx.SSEvent("message", event)
-			ctx.Writer.Flush() // 立即刷新缓冲区
+		for message := range messages {
+			ctx.SSEvent("message", message)
+			ctx.Writer.Flush()
 		}
+		if err := <-errors; err != nil {
+			ctx.SSEvent("error", gin.H{
+				"code":    "AGENT_STREAM_FAILED",
+				"message": "Agent 流式调用失败",
+			})
+			ctx.Writer.Flush()
+			return
+		}
+		ctx.SSEvent("done", "[DONE]")
+		ctx.Writer.Flush()
 	}
 }

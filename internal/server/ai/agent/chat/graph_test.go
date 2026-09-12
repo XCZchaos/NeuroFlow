@@ -9,6 +9,7 @@ import (
 	"OnCallAgent/pkg/config"
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/cloudwego/eino/components/document"
@@ -16,6 +17,9 @@ import (
 )
 
 func TestGraphConstruction(t *testing.T) {
+	if os.Getenv("ONCALLAGENT_INTEGRATION_TEST") != "1" {
+		t.Skip("set ONCALLAGENT_INTEGRATION_TEST=1 to run the external-service integration test")
+	}
 	config, err := config.InitConfig("../../../../../config/config.json")
 	if err != nil {
 		t.Fatalf("Failed to init config: %v", err)

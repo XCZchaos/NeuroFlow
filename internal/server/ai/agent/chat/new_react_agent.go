@@ -17,28 +17,39 @@ func (u chatServer) newReactAgentLambda(ctx context.Context) (node *compose.Lamb
 		return nil, err
 	}
 
-	timeTool, err := tools.TimeTool(ctx)
-	if err != nil {
-		return nil, err
-	}
+	tools.InitRAGTool(u.retriever)
+
 	retrieveTool, err := tools.RetrieveTool()
 	if err != nil {
 		return nil, err
 	}
-	promethesTool, err := tools.NewPrometheusAlertsTool(u.config.GetPrometheusURL())
+	neuroPlanTool, err := tools.NeuroPreprocessingDraftTool()
+	if err != nil {
+		return nil, err
+	}
+	inspectDatasetTool, err := tools.InspectDatasetTool()
+	if err != nil {
+		return nil, err
+	}
+	pythonAnalysisTool, err := tools.RunNeuroAnalysisTool()
 	if err != nil {
 		return nil, err
 	}
 	// 初始化所需的 tools
-	tools := compose.ToolsNodeConfig{
-		Tools: []tool.BaseTool{timeTool, retrieveTool, promethesTool},
+	toolConfig := compose.ToolsNodeConfig{
+		// retrieve 用于查知识库；inspectDataset 读取已验证的文件事实；
+		// neuroPlan 根据这些事实生成草案。三者职责保持独立，便于以后增加执行工具。
+		Tools: []tool.BaseTool{retrieveTool, inspectDatasetTool, neuroPlanTool, pythonAnalysisTool},
 	}
 
 	// 创建 agent
 	agent, err := react.NewAgent(ctx, &react.AgentConfig{
 		ToolCallingModel: toolableChatModel,
-		ToolsConfig:      tools,
+		ToolsConfig:      toolConfig,
 	})
+	if err != nil {
+		return nil, err
+	}
 	node, err = compose.AnyLambda(agent.Generate, agent.Stream, nil, nil)
 	if err != nil {
 		return nil, err

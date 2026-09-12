@@ -1,0 +1,3 @@
+# MNE provides the format readers used by inspect_dataset.py for EEG, MEG, and fNIRS metadata.
+# Keep the major version below 2 until the adapters have been verified against its API changes.
+mne>=1.7,<2

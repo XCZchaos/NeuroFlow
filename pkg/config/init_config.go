@@ -40,9 +40,11 @@ type QdrantConfig struct {
 
 // OpenAIConfig OpenAI API 配置
 type OpenAIConfig struct {
-	APIKey  string `mapstructure:"api_key"`
-	Model   string `mapstructure:"model"`
-	APIBase string `mapstructure:"api_base"`
+	APIKey      string  `mapstructure:"api_key"`
+	Model       string  `mapstructure:"model"`
+	APIBase     string  `mapstructure:"api_base"`
+	MaxTokens   int     `mapstructure:"max_tokens"`
+	Temperature float32 `mapstructure:"temperature"`
 }
 
 // PrometheusConfig Prometheus 配置
@@ -110,6 +112,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("openai.api_key", "")
 	v.SetDefault("openai.model", "minimax/minimax-m2.1")
 	v.SetDefault("openai.api_base", "https://api.qnaigc.com/v1")
+	// MaxTokens 是单次回答的生成上限，不是上下文窗口大小。
+	// 2048 足以覆盖多数数据解释和预处理方案，又能避免异常冗长的响应。
+	v.SetDefault("openai.max_tokens", 2048)
+	v.SetDefault("openai.temperature", 0.3)
 
 	// Prometheus 默认值
 	v.SetDefault("prometheus.url", "http://localhost:9090")

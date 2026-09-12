@@ -27,3 +27,27 @@ config.json
 *.pid
 
 myapp
+
+# Local development runtimes and downloaded tools
+/.tools/
+/.runtime/
+/.qdrant-initialized
+/.cache/
+/tmp/
+
+# Python runtime files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local neurophysiology data and generated analysis results
+# Real datasets should stay outside Git. Tiny public test fixtures can be force-added.
+/data/
+/datasets/
+/derivatives/
+/outputs/
+
+# Generated executables and runtime logs that existed in the upstream project
+/prometheusTestServer/testserver
+/log/

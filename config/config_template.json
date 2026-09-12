@@ -15,9 +15,11 @@
     "collection": "oncallagent"
   },
   "openai": {
-    "api_key": "xxx",
-    "model": "minimax/minimax-m2.1",
-    "api_base": "https://api.qnaigc.com/v1"
+    "api_key": "your-api-key",
+    "model": "gpt-5.6-sol",
+    "api_base": "https://api.chatanywhere.tech/v1",
+    "max_tokens": 2048,
+    "temperature": 0.3
   },
   "prometheus": {
     "url": "http://localhost:9090"

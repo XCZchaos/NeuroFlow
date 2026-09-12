@@ -35,12 +35,9 @@ func (qs qdrantIndexerServer) NewQdrantIndexer(ctx context.Context) error {
 	} else {
 		if exists {
 			// 集合已存在，删除集合
-			err = qs.client.DeleteCollection(ctx, CollectionName)
-			if err != nil {
-				return err
-			}
+			return nil
 		}
-		qs.client.CreateCollection(ctx, &qdrant.CreateCollection{
+		return qs.client.CreateCollection(ctx, &qdrant.CreateCollection{
 			CollectionName: CollectionName,
 			VectorsConfig: &qdrant.VectorsConfig{
 				Config: &qdrant.VectorsConfig_Params{

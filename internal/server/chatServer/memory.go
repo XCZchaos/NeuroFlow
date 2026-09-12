@@ -1,32 +1,68 @@
 package chatServer
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/cloudwego/eino/schema"
 )
 
-// 全局会话存储（内存 map）
 var SimpleMemoryMap = &sync.Map{}
 
-// 单个会话的记忆
 type SimpleMemory struct {
-	mu            sync.Mutex        // 保护并发读写
-	ID            string            // 会话ID
-	Messages      []*schema.Message // 消息历史
-	MaxWindowSize int               // 最大窗口大小，默认是6
+	mu            sync.Mutex
+	ID            string
+	Messages      []*schema.Message
+	MaxWindowSize int
 }
 
 func NewMemory(id string, max int) error {
-	if max <= 0 {
-		max = 6
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("会话 ID 不能为空")
 	}
-	var simpleMemory *SimpleMemory
-	simpleMemory = &SimpleMemory{
+	if max <= 0 {
+		// 一轮对话包含 user 和 assistant 两条消息；12 条约等于最近 6 轮。
+		// 这里限制的是历史记忆，并不限制模型当前一次回答的输出长度。
+		max = 12
+	}
+	SimpleMemoryMap.LoadOrStore(id, &SimpleMemory{
 		ID:            id,
 		Messages:      []*schema.Message{},
-		MaxWindowSize: 6,
-	}
-	SimpleMemoryMap.Store(id, simpleMemory)
+		MaxWindowSize: max,
+	})
 	return nil
+}
+
+func loadOrCreateMemory(id string) (*SimpleMemory, error) {
+	if err := NewMemory(id, 0); err != nil {
+		return nil, err
+	}
+	value, ok := SimpleMemoryMap.Load(strings.TrimSpace(id))
+	if !ok {
+		return nil, fmt.Errorf("创建会话失败")
+	}
+	memory, ok := value.(*SimpleMemory)
+	if !ok {
+		return nil, fmt.Errorf("会话状态类型错误")
+	}
+	return memory, nil
+}
+
+func (m *SimpleMemory) historySnapshot() []*schema.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	history := make([]*schema.Message, len(m.Messages))
+	copy(history, m.Messages)
+	return history
+}
+
+func (m *SimpleMemory) appendTurn(user, assistant *schema.Message) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Messages = append(m.Messages, user, assistant)
+	if len(m.Messages) > m.MaxWindowSize {
+		m.Messages = m.Messages[len(m.Messages)-m.MaxWindowSize:]
+	}
 }
