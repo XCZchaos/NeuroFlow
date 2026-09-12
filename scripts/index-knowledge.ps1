@@ -15,9 +15,9 @@ try {
     throw "NeuroFlow backend is unavailable at $BackendUrl. Start Qdrant, Ollama, and the Go backend first."
 }
 
-$files = @(Get-ChildItem -LiteralPath $KnowledgeRoot -Recurse -File -Filter "*.knowledge.md")
+$files = @(Get-ChildItem -LiteralPath $KnowledgeRoot -Recurse -File -Filter "*.md" | Where-Object { $_.Name -ne "README.md" -and -not $_.Name.StartsWith("_") })
 if ($files.Count -eq 0) {
-    throw "No *.knowledge.md files were found under $KnowledgeRoot"
+    throw "No indexable Markdown files were found under $KnowledgeRoot"
 }
 
 $completed = 0

@@ -63,34 +63,6 @@ MOABB 的 Pipeline 表达从输入试次到预测的完整算法链。任何根�
 
 来源：MOABB 官方 Playing with the pre-processing steps，https://moabb.neurotechx.com/docs/auto_examples/advanced_examples/plot_pre_processing_steps.html
 
-# MOABB-BCI-006 运动想象频段是范式参数而非固定真理
-
-- modality: EEG
-- paradigm: motor_imagery
-- stage: filtering
-- software: MOABB
-- review_status: seed_reviewed
-
-MOABB 示例可使用 8–35 Hz 处理左右手运动想象，但该范围是具体范式配置，不应自动推广到所有运动想象、运动执行或想象言语数据。Agent 应结合目标节律、数据集说明、采样率和验证方案选择频段，并保留实际配置。
-
-验证：比较候选频段的交叉验证结果，且频段选择必须在训练数据内完成。
-
-来源：MOABB 官方 Getting Started 教程，https://moabb.neurotechx.com/docs/auto_examples/tutorials/tutorial_0_plot_getting_started.html
-
-# MOABB-BCI-007 SSVEP 默认频段必须覆盖刺激频率及所需谐波
-
-- modality: EEG
-- paradigm: SSVEP
-- stage: filtering
-- software: MOABB
-- review_status: seed_reviewed
-
-MOABB `SSVEP` 类提供单带通配置，官方 API 当前默认示例为 7–45 Hz；真正的处理范围必须覆盖实验刺激频率以及算法需要的谐波。Agent 必须先读取刺激频率列表，不能因为软件存在默认值就直接采用默认频段。
-
-验证：确认所有目标刺激频率和选定谐波位于通带内，并比较 filter-bank 与单频带方案。
-
-来源：MOABB 官方 `moabb.paradigms.SSVEP` API，https://moabb.neurotechx.com/docs/generated/moabb.paradigms.SSVEP.html
-
 # MOABB-BCI-008 可复现实验必须保存上下文
 
 - modality: EEG

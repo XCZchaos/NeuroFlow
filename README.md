@@ -494,7 +494,7 @@ func NewMyTool() (tool.InvokableTool, error) {
 
 ### 扩展知识库
 
-初始 BCI 专家知识位于 `docs/knowledge/`，内容根据 MNE、EEGLAB 和 MOABB 官方文档提炼。每个 `.knowledge.md` 文件可包含多个原子知识点，每个一级标题会形成独立向量。知识条目记录适用模态、范式、处理阶段、限制、验证方法、来源和审核状态。
+初始 BCI 专家知识位于 `docs/knowledge/`，按照通用规则、EEG、MEG、fNIRS 和 BCI 范式组织，内容根据 MNE、EEGLAB 和 MOABB 官方文档提炼。知识文件可包含多个原子知识点，每个一级标题会形成独立向量。知识条目记录适用模态、范式、处理阶段、限制、验证方法、来源和审核状态。
 
 启动 Qdrant、Ollama 和 Go 后端后，可批量建立索引：
 
