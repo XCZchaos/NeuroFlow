@@ -25,24 +25,30 @@ var latestAnalysis sync.Map
 // NeuroAnalysisInput 是大模型可以填写的 function-call 参数。波形和本地路径
 // 不进入参数；dataset_id 由后端解析为用户已经导入的本地文件。
 type NeuroAnalysisInput struct {
-	DatasetID    string   `json:"dataset_id" jsonschema:"description=已导入数据集的 dataset_id"`
-	AnalysisType string   `json:"analysis_type" jsonschema:"description=summary 基础指标；quality 增加质量检查；full 执行 EEG 自动坏道、参考、ICA 与质量对比；默认 full"`
-	StartSeconds float64  `json:"start_seconds,omitempty" jsonschema:"description=分析起点（秒），默认为 0"`
-	EndSeconds   float64  `json:"end_seconds,omitempty" jsonschema:"description=分析终点（秒），0 表示记录末尾；长数据应分段调用"`
-	LeftChannel  string   `json:"left_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的左侧通道名，例如 F3"`
-	RightChannel string   `json:"right_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的右侧通道名，例如 F4"`
-	HighpassHz   float64  `json:"highpass_hz,omitempty" jsonschema:"description=EEG 高通截止频率 Hz；省略或 0 时使用 1 Hz"`
-	LowpassHz    float64  `json:"lowpass_hz,omitempty" jsonschema:"description=EEG 低通截止频率 Hz；省略或 0 时使用 45 Hz，并自动限制在 Nyquist 以下"`
-	NotchHz      float64  `json:"notch_hz,omitempty" jsonschema:"description=EEG 工频陷波频率 Hz；省略或 0 时使用文件 line_freq，缺失时使用 50 Hz"`
-	EnabledSteps []string `json:"enabled_steps,omitempty" jsonschema:"description=可选的 EEG 执行步骤：bad_channel_detection、bad_channel_interpolation、notch_filter、bandpass_filter、reference_selection、ica_artifact_removal；省略时执行完整安全流程"`
-	SaveOutput   *bool    `json:"save_output,omitempty" jsonschema:"description=是否保存处理后的 FIF 和审计文件；默认 true；用户明确要求不保存时必须设为 false"`
+	DatasetID     string   `json:"dataset_id" jsonschema:"description=已导入数据集的 dataset_id"`
+	AnalysisType  string   `json:"analysis_type" jsonschema:"description=summary 基础指标；quality 增加质量检查；full 执行 EEG 自动坏道、参考、ICA 与质量对比；默认 full"`
+	StartSeconds  float64  `json:"start_seconds,omitempty" jsonschema:"description=分析起点（秒），默认为 0"`
+	EndSeconds    float64  `json:"end_seconds,omitempty" jsonschema:"description=分析终点（秒），0 表示记录末尾；长数据应分段调用"`
+	LeftChannel   string   `json:"left_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的左侧通道名，例如 F3"`
+	RightChannel  string   `json:"right_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的右侧通道名，例如 F4"`
+	HighpassHz    float64  `json:"highpass_hz,omitempty" jsonschema:"description=EEG 高通截止频率 Hz；省略或 0 时使用 1 Hz"`
+	LowpassHz     float64  `json:"lowpass_hz,omitempty" jsonschema:"description=EEG 低通截止频率 Hz；省略或 0 时使用 45 Hz，并自动限制在 Nyquist 以下"`
+	NotchHz       float64  `json:"notch_hz,omitempty" jsonschema:"description=EEG 工频陷波频率 Hz；省略或 0 时使用文件 line_freq，缺失时使用 50 Hz"`
+	ResampleHz    float64  `json:"resample_hz,omitempty" jsonschema:"description=EEG 目标采样率 Hz；0 时自动选择不高于 250 Hz 的安全值"`
+	EpochTMin     float64  `json:"epoch_tmin,omitempty" jsonschema:"description=EEG 事件分段起点秒，默认 -0.2"`
+	EpochTMax     float64  `json:"epoch_tmax,omitempty" jsonschema:"description=EEG 事件分段终点秒，默认 0.8"`
+	BaselineStart float64  `json:"baseline_start,omitempty" jsonschema:"description=EEG 基线起点秒，默认 -0.2"`
+	BaselineEnd   float64  `json:"baseline_end,omitempty" jsonschema:"description=EEG 基线终点秒，默认 0"`
+	EpochRejectUV float64  `json:"epoch_reject_uv,omitempty" jsonschema:"description=Epoch 峰峰值拒绝阈值微伏；0 时根据数据稳健估计"`
+	EnabledSteps  []string `json:"enabled_steps,omitempty" jsonschema:"description=可选 EEG 步骤：bad_channel_detection、bad_channel_interpolation、notch_filter、bandpass_filter、reference_selection、ica_artifact_removal、resample、epoching、baseline、autoreject；省略时执行完整安全流程"`
+	SaveOutput    *bool    `json:"save_output,omitempty" jsonschema:"description=是否保存处理后的 FIF 和审计文件；默认 true；用户明确要求不保存时必须设为 false"`
 }
 
 // RunNeuroAnalysisTool 执行 NeuroFlow 自己的 Python/MNE 算法，并把紧凑的指标
 // JSON 返回给 Agent。只有此工具成功返回的内容才能被表述为“已经计算”。
 func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 	return utils.InferTool("run_neuro_analysis",
-		"使用本地 Python/MNE 对已导入 EEG 或 fNIRS 数据执行真实计算。EEG full 模式会自动选择安全滤波参数、检查并在有坐标时插值坏道、选择参考、保守筛选 ICA 成分、比较处理前后质量，并返回逐步审计记录；fNIRS 支持光密度、TDDR、Beer-Lambert、滤波、耦合质量和 HbO/HbR 统计。需要 dataset_id；不支持 MEG。",
+		"使用本地 Python/MNE 对已导入 EEG 或 fNIRS 数据执行真实计算。EEG full 模式支持坏道检测与插值、陷波、带通、重参考、ICA、重采样、基于 annotations/stim 的事件分段、基线校正和 Epoch 峰峰值伪迹拒绝，并返回处理前后质量与逐步审计记录；fNIRS 支持光密度、TDDR、Beer-Lambert、滤波、耦合质量和 HbO/HbR 统计。需要 dataset_id；不支持 MEG。",
 		func(ctx context.Context, input NeuroAnalysisInput) (string, error) {
 			saveOutput := true
 			if input.SaveOutput != nil {
@@ -74,6 +80,17 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 	if input.HighpassHz < 0 || input.LowpassHz < 0 || input.NotchHz < 0 {
 		return nil, fmt.Errorf("滤波频率不能为负数")
 	}
+	if input.ResampleHz < 0 || input.EpochRejectUV < 0 {
+		return nil, fmt.Errorf("重采样频率和 Epoch 拒绝阈值不能为负数")
+	}
+	// JSON 中省略字段会得到零值。Epoch 的 0 秒起点通常不符合 ERP/BCI 基线流程，
+	// 因此在上下界同时为零时应用界面与 MNE 执行器共享的默认时间窗。
+	if input.EpochTMin == 0 && input.EpochTMax == 0 {
+		input.EpochTMin, input.EpochTMax = -0.2, 0.8
+	}
+	if input.BaselineStart == 0 && input.BaselineEnd == 0 {
+		input.BaselineStart, input.BaselineEnd = -0.2, 0
+	}
 	path, inspection, ok := dataset.ResolveLocalPath(input.DatasetID)
 	if !ok {
 		return nil, fmt.Errorf("dataset_id 不存在或后端已重启，请重新导入数据")
@@ -90,9 +107,13 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 	if inspection.Modality == "EEG" {
 		// 0 会原样传给 Python，表示让自动流程结合采样率和频谱质量选择参数。
 		args = append(args, "--highpass-hz", fmt.Sprintf("%g", input.HighpassHz),
-			"--lowpass-hz", fmt.Sprintf("%g", input.LowpassHz), "--notch-hz", fmt.Sprintf("%g", input.NotchHz))
+			"--lowpass-hz", fmt.Sprintf("%g", input.LowpassHz), "--notch-hz", fmt.Sprintf("%g", input.NotchHz),
+			"--resample-hz", fmt.Sprintf("%g", input.ResampleHz),
+			"--epoch-tmin", fmt.Sprintf("%g", input.EpochTMin), "--epoch-tmax", fmt.Sprintf("%g", input.EpochTMax),
+			"--baseline-start", fmt.Sprintf("%g", input.BaselineStart), "--baseline-end", fmt.Sprintf("%g", input.BaselineEnd),
+			"--epoch-reject-uv", fmt.Sprintf("%g", input.EpochRejectUV))
 		if len(input.EnabledSteps) > 0 {
-			allowed := map[string]bool{"bad_channel_detection": true, "bad_channel_interpolation": true, "notch_filter": true, "bandpass_filter": true, "reference_selection": true, "ica_artifact_removal": true}
+			allowed := map[string]bool{"bad_channel_detection": true, "bad_channel_interpolation": true, "notch_filter": true, "bandpass_filter": true, "reference_selection": true, "ica_artifact_removal": true, "resample": true, "epoching": true, "baseline": true, "autoreject": true}
 			steps := make([]string, 0, len(input.EnabledSteps))
 			for _, step := range input.EnabledSteps {
 				step = strings.TrimSpace(step)
@@ -138,6 +159,9 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 		}
 		if auditName, ok := output["audit_file_name"].(string); ok {
 			output["audit_relative_path"] = filepath.ToSlash(filepath.Join("outputs", input.DatasetID, auditName))
+		}
+		if epochsName, ok := output["epochs_file_name"].(string); ok {
+			output["epochs_relative_path"] = filepath.ToSlash(filepath.Join("outputs", input.DatasetID, epochsName))
 		}
 	}
 	result["analysis_id"] = fmt.Sprintf("%d", time.Now().UnixNano())

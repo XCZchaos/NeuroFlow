@@ -226,7 +226,10 @@ def eeg_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
 def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
                       left_channel: str | None, right_channel: str | None,
                       highpass_hz: float, lowpass_hz: float, notch_hz: float,
-                      enabled_steps: set[str] | None = None):
+                      enabled_steps: set[str] | None = None,
+                      resample_hz: float = 0.0, epoch_tmin: float = -0.2,
+                      epoch_tmax: float = 0.8, baseline_start: float = -0.2,
+                      baseline_end: float = 0.0, epoch_reject_uv: float = 0.0):
     """执行可审计的 EEG 自动预处理，并在单个步骤失败时安全降级。"""
     picks = mne.pick_types(raw.info, eeg=True, meg=False, fnirs=False, exclude=[])
     if not len(picks):
@@ -240,8 +243,11 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
 
     audit = []
     plan = []
-    enabled = enabled_steps or {"bad_channel_detection", "bad_channel_interpolation", "notch_filter",
-                                "bandpass_filter", "reference_selection", "ica_artifact_removal"}
+    enabled = enabled_steps or {
+        "bad_channel_detection", "bad_channel_interpolation", "notch_filter",
+        "bandpass_filter", "reference_selection", "ica_artifact_removal",
+        "resample", "epoching", "baseline", "autoreject",
+    }
     def record(step, status, detail, attempt=1):
         entry = {"step": step, "status": status, "detail": detail, "attempt": attempt}
         audit.append(entry); plan.append(entry.copy())
@@ -303,6 +309,22 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
 
     info = mne.pick_info(raw.info, picks, copy=True)
     working = mne.io.RawArray(demeaned.copy(), info, verbose=False)
+    # RawArray 不会自动继承原始文件的 annotations。事件分段依赖这些标记，因此把落在
+    # 当前分析时间窗中的标注平移到局部时间轴；持续时间和描述保持原样。
+    window_start = start / sfreq
+    window_end = stop / sfreq
+    annotation_onsets, annotation_durations, annotation_descriptions = [], [], []
+    for onset, duration_value, description in zip(raw.annotations.onset,
+                                                  raw.annotations.duration,
+                                                  raw.annotations.description):
+        if onset + duration_value >= window_start and onset < window_end:
+            annotation_onsets.append(max(0.0, float(onset) - window_start))
+            annotation_durations.append(float(duration_value))
+            annotation_descriptions.append(str(description))
+    if annotation_onsets:
+        working.set_annotations(mne.Annotations(annotation_onsets, annotation_durations,
+                                                annotation_descriptions,
+                                                orig_time=working.info.get("meas_date")))
     working.info["bads"] = bad_names
     interpolation = {"requested": bool(bad_names), "performed": False, "channels": bad_names}
     if bad_names and "bad_channel_interpolation" in enabled:
@@ -377,8 +399,91 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
         ica_report["reason"] = reason
         record("ica_artifact_removal", "skipped", reason)
 
+    # MNE Raw.resample 同时重采样数据和 annotations。它放在滤波与 ICA 之后，避免先降采样
+    # 造成混叠，也让后续 Epochs 使用更新后的采样率。目标频率不得高于原采样率。
+    original_sfreq = float(working.info["sfreq"])
+    if "resample" in enabled:
+        target_sfreq = resample_hz if resample_hz > 0 else min(250.0, original_sfreq)
+        if target_sfreq < original_sfreq:
+            working.resample(target_sfreq, npad="auto", verbose=False)
+            record("resample", "completed", f"{original_sfreq:g} Hz -> {target_sfreq:g} Hz using MNE Raw.resample")
+        elif math.isclose(target_sfreq, original_sfreq):
+            record("resample", "skipped", "target sampling rate equals the input sampling rate")
+        else:
+            record("resample", "skipped", "target sampling rate is above the input rate; upsampling was not performed")
+    else:
+        record("resample", "skipped", "disabled by pipeline")
+
+    processed_sfreq = float(working.info["sfreq"])
+    epochs = None
+    epoch_report = {"performed": False, "event_count": 0, "retained_epochs": 0}
+    needs_epochs = bool({"epoching", "baseline", "autoreject"}.intersection(enabled))
+    if needs_epochs:
+        # 基线或 Epoch 拒绝本身不能脱离 Epochs 工作；用户只启用下游步骤时自动补上
+        # event segmentation，并在审计记录中留下依赖激活说明。
+        if "epoching" not in enabled:
+            record("epoching_dependency", "adjusted", "epoching enabled because baseline/autoreject requires Epochs")
+        if epoch_tmin >= epoch_tmax:
+            raise ValueError("epoch_tmin must be smaller than epoch_tmax")
+        try:
+            events, event_id = mne.events_from_annotations(working, verbose=False)
+            event_source = "annotations"
+            if not len(events):
+                events = mne.find_events(working, shortest_event=1, verbose=False)
+                event_id = None
+                event_source = "stim channel"
+        except (ValueError, RuntimeError):
+            events, event_id, event_source = np.empty((0, 3), dtype=int), None, "none"
+        if len(events):
+            epochs = mne.Epochs(working, events, event_id=event_id, tmin=epoch_tmin,
+                                tmax=epoch_tmax, baseline=None, preload=True,
+                                reject_by_annotation=True, on_missing="warn", verbose=False)
+            epoch_report.update({"performed": True, "event_source": event_source,
+                                 "event_count": int(len(events)),
+                                 "retained_epochs": int(len(epochs)),
+                                 "tmin_seconds": epoch_tmin, "tmax_seconds": epoch_tmax,
+                                 "event_id": event_id or {}})
+            record("epoching", "completed", f"created {len(epochs)} epochs from {len(events)} {event_source} events")
+        else:
+            epoch_report["reason"] = "no annotations or stim-channel events were found"
+            record("epoching", "skipped", epoch_report["reason"])
+    else:
+        record("epoching", "skipped", "disabled by pipeline")
+
+    if "baseline" in enabled and epochs is not None and len(epochs):
+        baseline = (baseline_start, baseline_end)
+        if baseline_start > baseline_end or baseline_start < epoch_tmin or baseline_end > epoch_tmax:
+            raise ValueError("baseline interval must be ordered and contained within the epoch interval")
+        epochs.apply_baseline(baseline, verbose=False)
+        epoch_report["baseline_seconds"] = [baseline_start, baseline_end]
+        record("baseline", "completed", f"MNE Epochs.apply_baseline interval [{baseline_start:g}, {baseline_end:g}] s")
+    else:
+        reason = "disabled by pipeline" if "baseline" not in enabled else "no usable epochs"
+        record("baseline", "skipped", reason)
+
+    if "autoreject" in enabled and epochs is not None and len(epochs):
+        # 使用每个 epoch、每个 EEG 通道的峰峰值构造稳健阈值，然后交给 MNE
+        # Epochs.drop_bad 执行实际拒绝。用户给定 μV 阈值时优先使用该确定值。
+        peak_to_peak_epochs = np.ptp(epochs.get_data(copy=False), axis=2)
+        robust_limit = np.median(peak_to_peak_epochs) + 6.0 * 1.4826 * np.median(
+            np.abs(peak_to_peak_epochs - np.median(peak_to_peak_epochs)))
+        reject_volts = epoch_reject_uv * 1e-6 if epoch_reject_uv > 0 else float(robust_limit)
+        if not np.isfinite(reject_volts) or reject_volts <= 0:
+            reject_volts = 150e-6
+        before_drop = len(epochs)
+        epochs.drop_bad(reject={"eeg": reject_volts}, verbose=False)
+        rejected = before_drop - len(epochs)
+        epoch_report.update({"rejection_threshold_uv": finite(reject_volts * 1e6),
+                             "rejected_epochs": int(rejected),
+                             "retained_epochs": int(len(epochs))})
+        record("autoreject", "completed", f"MNE Epochs.drop_bad rejected {rejected}/{before_drop} epochs at {reject_volts * 1e6:.2f} uV")
+    else:
+        reason = "disabled by pipeline" if "autoreject" not in enabled else "no usable epochs"
+        record("autoreject", "skipped", reason)
+
     processed = working.get_data()
-    after_quality = signal_quality(processed, sfreq, selected_notch or min(50, nyquist * .8))
+    after_quality = signal_quality(processed, processed_sfreq,
+                                   selected_notch or min(50, processed_sfreq * .4))
     delta = (after_quality["score"] or 0) - (before_quality["score"] or 0)
     record("quality_assessment_after", "completed", f"score={after_quality['score']}, change={delta:+.2f}")
 
@@ -390,14 +495,16 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
         "mode": "automatic",
         "preprocessing": {"dc_removed": True, "notch_hz": selected_notch or None,
                           "bandpass_hz": [effective_high, effective_low], "reference": reference,
-                          "bad_channel_interpolation": interpolation, "ica": ica_report},
+                          "bad_channel_interpolation": interpolation, "ica": ica_report,
+                          "resample": {"input_hz": original_sfreq, "output_hz": processed_sfreq},
+                          "epochs": epoch_report},
         "quality_comparison": {"before": before_quality, "after": after_quality,
                                "score_change": finite(delta), "improved": delta >= 0},
         "execution_plan": plan,
         "audit_log": audit,
         "warnings": [entry["detail"] for entry in audit if entry["status"] == "degraded"],
     })
-    return metric_result, demeaned, processed, working.info
+    return metric_result, demeaned, processed, working.info, processed_sfreq, epochs
 
 
 def fnirs_analysis(raw, start: int, stop: int, sfreq: float, profile: str):
@@ -489,6 +596,14 @@ def main() -> int:
     parser.add_argument("--lowpass-hz", type=float, default=45.0)
     parser.add_argument("--notch-hz", type=float, default=0.0,
                         help="0 uses the file line frequency or 50 Hz")
+    parser.add_argument("--resample-hz", type=float, default=0.0,
+                        help="0 selects a safe default no higher than 250 Hz")
+    parser.add_argument("--epoch-tmin", type=float, default=-0.2)
+    parser.add_argument("--epoch-tmax", type=float, default=0.8)
+    parser.add_argument("--baseline-start", type=float, default=-0.2)
+    parser.add_argument("--baseline-end", type=float, default=0.0)
+    parser.add_argument("--epoch-reject-uv", type=float, default=0.0,
+                        help="0 derives a robust threshold from epoch peak-to-peak amplitudes")
     parser.add_argument("--steps", help="comma-separated executable EEG pipeline step IDs")
     parser.add_argument("--output", help="optional path for the processed FIF file")
     args = parser.parse_args()
@@ -497,12 +612,14 @@ def main() -> int:
         start, stop, sfreq = select_range(raw, args.start, args.end)
         if args.modality == "EEG":
             selected_steps = {item.strip() for item in (args.steps or "").split(",") if item.strip()} or None
-            result, raw_data, processed_data, processed_info = eeg_auto_analysis(
+            result, raw_data, processed_data, processed_info, processed_sfreq, processed_epochs = eeg_auto_analysis(
                 raw, start, stop, sfreq, args.profile, args.left_channel,
-                args.right_channel, args.highpass_hz, args.lowpass_hz, args.notch_hz, selected_steps)
+                args.right_channel, args.highpass_hz, args.lowpass_hz, args.notch_hz,
+                selected_steps, args.resample_hz, args.epoch_tmin, args.epoch_tmax,
+                args.baseline_start, args.baseline_end, args.epoch_reject_uv)
             preview = {
                 "raw": build_preview(raw_data * 1e6, result["channel_names"], sfreq, "µV"),
-                "processed": build_preview(processed_data * 1e6, result["channel_names"], sfreq, "µV"),
+                "processed": build_preview(processed_data * 1e6, result["channel_names"], processed_sfreq, "µV"),
             }
             processed_raw = mne.io.RawArray(processed_data, processed_info, verbose=False)
         else:
@@ -526,9 +643,16 @@ def main() -> int:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             processed_raw.save(str(output_path), overwrite=True, verbose=False)
             output = {"saved": True, "file_name": output_path.name, "format": "FIF"}
+            # 连续结果用于 Electron 的完整时间轴浏览；Epochs 另存为标准 -epo.fif，
+            # 这样事件、基线设置和 drop_log 都不会在保存时丢失。
+            if args.modality == "EEG" and processed_epochs is not None and len(processed_epochs):
+                epochs_path = output_path.with_name(output_path.stem.replace("_raw", "") + "-epo.fif")
+                processed_epochs.save(str(epochs_path), overwrite=True, verbose=False)
+                output["epochs_file_name"] = epochs_path.name
         payload = {
             "ok": True, "engine": "NeuroFlow Python/MNE", "modality": args.modality,
-            "analysis_type": args.profile, "sampling_rate_hz": sfreq,
+            "analysis_type": args.profile,
+            "sampling_rate_hz": processed_sfreq if args.modality == "EEG" else sfreq,
             "selection": {"start_seconds": start / sfreq, "end_seconds": stop / sfreq, "sample_count": stop - start},
             "result": result, "preview": preview, "output": output,
         }

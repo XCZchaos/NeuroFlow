@@ -12,16 +12,22 @@ import (
 // analyzeDatasetRequest 是工作台允许用户控制的确定性参数。
 // dataset_id 来自 URL，避免渲染进程在请求体中替换分析对象。
 type analyzeDatasetRequest struct {
-	AnalysisType string   `json:"analysis_type"`
-	StartSeconds float64  `json:"start_seconds"`
-	EndSeconds   float64  `json:"end_seconds"`
-	LeftChannel  string   `json:"left_channel"`
-	RightChannel string   `json:"right_channel"`
-	HighpassHz   float64  `json:"highpass_hz"`
-	LowpassHz    float64  `json:"lowpass_hz"`
-	NotchHz      float64  `json:"notch_hz"`
-	EnabledSteps []string `json:"enabled_steps"`
-	SaveOutput   *bool    `json:"save_output"`
+	AnalysisType  string   `json:"analysis_type"`
+	StartSeconds  float64  `json:"start_seconds"`
+	EndSeconds    float64  `json:"end_seconds"`
+	LeftChannel   string   `json:"left_channel"`
+	RightChannel  string   `json:"right_channel"`
+	HighpassHz    float64  `json:"highpass_hz"`
+	LowpassHz     float64  `json:"lowpass_hz"`
+	NotchHz       float64  `json:"notch_hz"`
+	ResampleHz    float64  `json:"resample_hz"`
+	EpochTMin     float64  `json:"epoch_tmin"`
+	EpochTMax     float64  `json:"epoch_tmax"`
+	BaselineStart float64  `json:"baseline_start"`
+	BaselineEnd   float64  `json:"baseline_end"`
+	EpochRejectUV float64  `json:"epoch_reject_uv"`
+	EnabledSteps  []string `json:"enabled_steps"`
+	SaveOutput    *bool    `json:"save_output"`
 }
 
 // AnalyzeDataset 让 Electron 的“运行流程”和 Agent function call 共用同一个执行层。
@@ -44,7 +50,10 @@ func AnalyzeDataset() gin.HandlerFunc {
 			StartSeconds: request.StartSeconds, EndSeconds: request.EndSeconds,
 			LeftChannel: request.LeftChannel, RightChannel: request.RightChannel,
 			HighpassHz: request.HighpassHz, LowpassHz: request.LowpassHz, NotchHz: request.NotchHz,
-			EnabledSteps: request.EnabledSteps,
+			ResampleHz: request.ResampleHz, EpochTMin: request.EpochTMin, EpochTMax: request.EpochTMax,
+			BaselineStart: request.BaselineStart, BaselineEnd: request.BaselineEnd,
+			EpochRejectUV: request.EpochRejectUV,
+			EnabledSteps:  request.EnabledSteps,
 		}, saveOutput)
 		if err != nil {
 			ctx.JSON(http.StatusUnprocessableEntity, gin.H{"code": "ANALYSIS_FAILED", "message": err.Error()})

@@ -27,7 +27,7 @@ const templates = {
 };
 // key 与 Python/MNE 审计日志中的步骤 ID 一致。只有 executable=true 的步骤
 // 会出现在真实 EEG 请求中；规划中的算法可以展示，但不能伪装成已经接入。
-const stepKeyByName={'带通滤波':'bandpass_filter','工频陷波':'notch_filter','坏道检测':'bad_channel_detection','坏道插值':'bad_channel_interpolation','独立成分分析':'ica_artifact_removal','重参考':'reference_selection','传感器质量检查':'sensor_quality','环境噪声抑制':'maxwell_filter','生理伪迹审查':'physiological_artifacts','光强转光密度':'optical_density','通道质量检查':'channel_quality','运动伪迹校正':'motion_correction','血红蛋白浓度转换':'beer_lambert'};
+const stepKeyByName={'带通滤波':'bandpass_filter','工频陷波':'notch_filter','坏道检测':'bad_channel_detection','坏道插值':'bad_channel_interpolation','独立成分分析':'ica_artifact_removal','重参考':'reference_selection','重采样':'resample','事件分段':'epoching','基线校正':'baseline','Epoch 伪迹拒绝':'autoreject','传感器质量检查':'sensor_quality','环境噪声抑制':'maxwell_filter','生理伪迹审查':'physiological_artifacts','光强转光密度':'optical_density','通道质量检查':'channel_quality','运动伪迹校正':'motion_correction','血红蛋白浓度转换':'beer_lambert'};
 const algorithmCatalog={
   EEG:[
     {key:'bad_channel_detection',name:'坏道检测',english:'Bad channel detection',params:[['方法','自动检测']],executable:true},
@@ -36,10 +36,10 @@ const algorithmCatalog={
     {key:'bandpass_filter',name:'带通滤波',english:'Band-pass filter',params:[['低频 Hz','0.5'],['高频 Hz','40']],executable:true},
     {key:'reference_selection',name:'重参考',english:'Re-reference',params:[['参考方式','平均参考']],executable:true},
     {key:'ica_artifact_removal',name:'独立成分分析',english:'ICA artifact review',params:[['算法','FastICA'],['成分数','20']],executable:true},
-    {key:'resample',name:'重采样',english:'Resampling',params:[['目标 Hz','250']],executable:false},
-    {key:'epoching',name:'事件分段',english:'Epoching',params:[['起点 s','-0.2'],['终点 s','0.8']],executable:false},
-    {key:'baseline',name:'基线校正',english:'Baseline correction',params:[['区间','-0.2, 0']],executable:false},
-    {key:'autoreject',name:'Epoch 伪迹拒绝',english:'Epoch rejection',params:[['方法','待接入']],executable:false}
+    {key:'resample',name:'重采样',english:'Resampling',params:[['目标 Hz','250']],executable:true},
+    {key:'epoching',name:'事件分段',english:'Epoching',params:[['起点 s','-0.2'],['终点 s','0.8']],executable:true},
+    {key:'baseline',name:'基线校正',english:'Baseline correction',params:[['区间','-0.2, 0']],executable:true},
+    {key:'autoreject',name:'Epoch 伪迹拒绝',english:'Epoch rejection',params:[['阈值 μV','0']],executable:true}
   ],
   MEG:[],fNIRS:[]
 };
@@ -427,12 +427,20 @@ async function syncLatestAgentAnalysis(dataset,previousAnalysisId){
   }catch(error){console.warn('Unable to synchronize Agent waveform',error);return null;}
 }
 function numericPipelineParameter(stepName,paramName,fallback){const step=state.steps.find(item=>item.name===stepName&&item.enabled);const value=step?.params.find(item=>item[0]===paramName)?.[1];const number=Number.parseFloat(value);return Number.isFinite(number)?number:fallback;}
+// 区间参数允许用户输入“-0.2, 0”或“-0.2，0”。解析失败时使用经过验证的默认值，
+// 后端仍会再次校验区间是否位于 epoch 内，避免只依赖界面校验。
+function intervalPipelineParameter(stepName,paramName,fallback){const step=state.steps.find(item=>item.name===stepName&&item.enabled);const value=step?.params.find(item=>item[0]===paramName)?.[1];const numbers=String(value??'').split(/[,，]/).map(item=>Number.parseFloat(item.trim()));return numbers.length===2&&numbers.every(Number.isFinite)?numbers:fallback;}
 async function requestAnalysis(){
   const body={analysis_type:'full',start_seconds:0,end_seconds:0,save_output:$('#save-output').checked};
   if(state.mode==='EEG'){
     body.highpass_hz=numericPipelineParameter('带通滤波','低频 Hz',1);
     body.lowpass_hz=numericPipelineParameter('带通滤波','高频 Hz',45);
     body.notch_hz=numericPipelineParameter('工频陷波','频率 Hz',50);
+	body.resample_hz=numericPipelineParameter('重采样','目标 Hz',250);
+	body.epoch_tmin=numericPipelineParameter('事件分段','起点 s',-.2);
+	body.epoch_tmax=numericPipelineParameter('事件分段','终点 s',.8);
+	[body.baseline_start,body.baseline_end]=intervalPipelineParameter('基线校正','区间',[-.2,0]);
+	body.epoch_reject_uv=numericPipelineParameter('Epoch 伪迹拒绝','阈值 μV',0);
 	body.enabled_steps=state.steps.filter(step=>step.enabled&&step.executable).map(step=>step.key);
   }
   const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
