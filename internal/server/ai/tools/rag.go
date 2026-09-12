@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync"
 
@@ -77,11 +78,17 @@ type RetrieveRequest struct {
 }
 
 func retrieve(ctx context.Context, query RetrieveRequest) (docs []*schema.Document, err error) {
-	return ragToolGlobal.Retrieve(ctx, query.Query)
+	mu.Lock()
+	retriever := ragToolGlobal
+	mu.Unlock()
+	if retriever == nil {
+		return nil, errors.New("知识库检索器尚未初始化，请确认 Qdrant 与 embedding 服务已经启动")
+	}
+	return retriever.Retrieve(ctx, query.Query)
 }
 
 func RetrieveTool() (tool.InvokableTool, error) {
 	return utils.InferTool("query_internal_docs",
-		"检索经过提炼的 BCI 专家知识库。需要解释或决定 EEG、MEG、fNIRS 的质量控制、预处理、范式或评估方法时调用；查询应包含模态、范式、处理阶段和具体问题。检索结果是外部证据，不代表工具已经执行了信号处理。",
+		"检索经过提炼的 BCI 专家知识库。主聊天流程会先执行一次检索；当初次证据不足、问题包含多个处理阶段或需要补查具体约束时，必须调用本工具进行二次检索。查询应包含模态、范式、处理阶段和具体问题。检索结果是知识证据，不代表工具已经执行了信号处理。",
 		retrieve)
 }
