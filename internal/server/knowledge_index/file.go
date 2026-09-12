@@ -32,7 +32,8 @@ func (u *fileUploader) Upload(ctx context.Context, file *multipart.FileHeader, p
 		return "", err
 	}
 	defer src.Close()
-	path += file.Filename
+	// multipart 文件名只取 basename，避免客户端通过相对路径写出上传目录。
+	path = filepath.Join(path, filepath.Base(file.Filename))
 
 	var mode os.FileMode = 0o750
 
@@ -66,7 +67,7 @@ func (u *fileUploader) Upload(ctx context.Context, file *multipart.FileHeader, p
 
 	// 调用 RAG 接口；若失败则回滚（删除已写入的文件）
 	_, err = u.r.Invoke(ctx, document.Source{
-		URI: "./docs/" + file.Filename,
+		URI: path,
 	})
 	if err != nil {
 		u.logger.Errorf("RAG 失败，开始回滚删除文件 %s, err: %v", path, err)

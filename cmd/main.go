@@ -38,7 +38,8 @@ func main() {
 	}
 	//初始化retriever
 	retriever := retriever.NewRetrieverServer(ctx, indexer, *embedder)
-	run, err := retriever.NewRetrieverServer(ctx, "oncallagent", 0.5, 2)
+	// 专家知识采用原子化条目。TopK=5 在提供多来源证据的同时避免把过多文本塞入模型上下文。
+	run, err := retriever.NewRetrieverServer(ctx, "oncallagent", 0.5, 5)
 	if err != nil {
 		panic(err)
 	}

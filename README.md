@@ -494,7 +494,15 @@ func NewMyTool() (tool.InvokableTool, error) {
 
 ### 扩展知识库
 
-将 Markdown 文档放入 `docs/`，通过 `/upload` 上传并建立索引。文档应清楚记录适用模态、前提条件、参数单位、参考文献和软件版本。
+初始 BCI 专家知识位于 `docs/knowledge/`，内容根据 MNE、EEGLAB 和 MOABB 官方文档提炼。每个 `.knowledge.md` 文件可包含多个原子知识点，每个一级标题会形成独立向量。知识条目记录适用模态、范式、处理阶段、限制、验证方法、来源和审核状态。
+
+启动 Qdrant、Ollama 和 Go 后端后，可批量建立索引：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/index-knowledge.ps1
+```
+
+新增知识时应优先编写短小且可独立理解的规则，不要直接复制整篇官方文档或论文。`seed_reviewed` 表示根据官方资料整理的初始条目，正式用于自动决策前建议升级为人工确认的 `expert_reviewed`。
 
 ### 运行检查
 

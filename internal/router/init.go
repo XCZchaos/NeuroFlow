@@ -33,7 +33,8 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	})
 	//文件上传
 	uploder := knowledgeindex.NewFileUploaderServer(loger, runner)
-	uploderHandler := handler.NewFileUploader("./docs/", uploder)
+	// 上传副本属于运行时文件，保存在已被 Git 忽略的 uploads 目录；审核后的知识源仍位于 docs/knowledge。
+	uploderHandler := handler.NewFileUploader("./uploads/", uploder)
 	r.POST("/upload", uploderHandler.Upload())
 	//对话
 	chater := chatServer.NewChatServer(loger, runnerChat)

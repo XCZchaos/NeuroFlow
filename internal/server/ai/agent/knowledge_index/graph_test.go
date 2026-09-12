@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 	"github.com/qdrant/go-client/qdrant"
 )
 
@@ -124,6 +125,28 @@ func TestTextToQdrantIndex_NormalH1(t *testing.T) {
 	}
 	if mockQdrant.capturedPts == nil {
 		t.Fatal("未调用 AddVector")
+	}
+}
+
+func TestTextToQdrantIndex_StoresExpertMetadata(t *testing.T) {
+	ctx := context.Background()
+	mockQdrant := &mockQdrantServer{}
+	k := &knowledgeIndex{embederServer: &mockEmbeddingServer{}, qdrantServer: mockQdrant}
+	doc := &schema.Document{ID: "random-split-id", Content: "# MNE-EEG-001 滤波约束\n\n- modality: EEG, MEG\n- stage: filtering\n- software: MNE\n- review_status: seed_reviewed\n\n正文\n\n来源：MNE，https://mne.tools/stable/example.html"}
+
+	if ok, err := k.textToQdrantIndex()(ctx, []*schema.Document{doc}); err != nil || !ok {
+		t.Fatalf("索引专家知识失败: ok=%v err=%v", ok, err)
+	}
+	point := mockQdrant.capturedPts.Points[0]
+	if point.GetId().GetUuid() != uuid.NewSHA1(uuid.NameSpaceURL, []byte("MNE-EEG-001")).String() {
+		t.Fatalf("知识点没有使用稳定 UUID: %s", point.GetId().GetUuid())
+	}
+	payload := point.GetPayload()
+	if payload["knowledge_id"].GetStringValue() != "MNE-EEG-001" || payload["stage"].GetStringValue() != "filtering" {
+		t.Fatalf("专家元数据未正确写入 payload: %+v", payload)
+	}
+	if got := payload["modality"].GetListValue().GetValues(); len(got) != 2 {
+		t.Fatalf("多值模态解析错误: %+v", got)
 	}
 }
 

@@ -73,7 +73,7 @@ func (e *embeddderNormalize) EmbedStrings(ctx context.Context, texts []string, o
 }
 
 type RetrieveRequest struct {
-	Query string `json:"query" jsonschema:"description=The query string to search in internal documentation for relevant information and processing steps"`
+	Query string `json:"query" jsonschema:"description=用于检索 BCI 专家知识的具体问题；应包含已知的模态、范式和处理阶段，例如 EEG motor imagery filtering"`
 }
 
 func retrieve(ctx context.Context, query RetrieveRequest) (docs []*schema.Document, err error) {
@@ -82,6 +82,6 @@ func retrieve(ctx context.Context, query RetrieveRequest) (docs []*schema.Docume
 
 func RetrieveTool() (tool.InvokableTool, error) {
 	return utils.InferTool("query_internal_docs",
-		"Use this tool to search internal documentation and knowledge base for relevant information. It performs RAG (Retrieval-Augmented Generation) to find similar documents and extract processing steps. This is useful when you need to understand internal procedures, best practices, or step-by-step guides stored in the company's documentation.",
+		"检索经过提炼的 BCI 专家知识库。需要解释或决定 EEG、MEG、fNIRS 的质量控制、预处理、范式或评估方法时调用；查询应包含模态、范式、处理阶段和具体问题。检索结果是外部证据，不代表工具已经执行了信号处理。",
 		retrieve)
 }
