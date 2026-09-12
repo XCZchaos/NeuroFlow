@@ -19,7 +19,7 @@
     "model": "gpt-5.6-sol",
     "api_base": "https://api.chatanywhere.tech/v1",
     "max_tokens": 4096,
-    "temperature": 0.3
+    "temperature": 1
   },
   "prometheus": {
     "url": "http://localhost:9090"

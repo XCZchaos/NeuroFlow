@@ -115,7 +115,8 @@ func setDefaults(v *viper.Viper) {
 	// MaxTokens 是单次回答的生成上限，不是上下文窗口大小。
 	// 深度分析模式需要容纳证据、步骤、风险和验证方案；即时模式由提示词主动收敛篇幅。
 	v.SetDefault("openai.max_tokens", 4096)
-	v.SetDefault("openai.temperature", 0.3)
+	// gpt-5.6-sol 当前要求 temperature 固定为 1；其他值会在 Eino 模型层直接报错。
+	v.SetDefault("openai.temperature", 1.0)
 
 	// Prometheus 默认值
 	v.SetDefault("prometheus.url", "http://localhost:9090")
