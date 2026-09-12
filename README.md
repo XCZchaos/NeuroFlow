@@ -2,6 +2,11 @@
 
 面向 EEG、MEG 与 fNIRS 的智能神经信号工作台——融合 Electron、MNE、RAG 与 ReAct Agent，帮助研究者读取数据结构、理解文件信息并生成可复核的预处理方案。
 
+[![Release](https://img.shields.io/badge/release-v0.1-16846d)](https://github.com/XCZchaos/NeuroFlow/tree/v0.1)
+[![Go](https://img.shields.io/badge/Go-1.25.5-00ADD8?logo=go)](https://go.dev/)
+[![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron)](https://www.electronjs.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 ## 项目简介
 
 NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统。项目希望将“导入数据、检查结构、制定流程、执行分析、评估质量”组织成可解释、可复现的 Agent 工作流。
@@ -14,7 +19,7 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统�
 
 三者协同工作：**MNE** 提供可验证的数据事实，**RAG** 提供领域知识，**ReAct Agent** 根据用户问题选择工具并组织回答。
 
-> 当前版本能够读取文件元数据，并通过 Agent 工具执行部分纯 Python EEG/fNIRS 分析。界面中的“运行流程”仍是演示；ICA、坏道插值、MEG SSS/tSSS、事件分段和处理后文件导出尚未实现。
+> **v0.1 能力边界：** EEG 已支持自动滤波参数、坏道检测与条件插值、平均参考、保守 ICA 伪迹筛选、处理前后质量比较和 FIF 导出；fNIRS 已支持光密度、TDDR、Beer–Lambert、滤波与 HbO/HbR 汇总。MEG 当前支持格式识别、元数据和真实波形读取，尚未实现 SSS/tSSS 等专用预处理。
 
 ## 功能特性
 
@@ -23,6 +28,11 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统�
 - **元数据读取** - 获取格式、模态、通道数、通道名称、通道类型、采样率、时长、样本数和标注数量
 - **数据集上下文** - 为每次成功导入生成 `dataset_id`，Agent 可以查询对应的可信元数据
 - **智能对话** - ReAct Agent 驱动的多轮对话，支持普通响应、流式响应与工具调用
+- **自动预处理** - Agent 可根据用户意图调用本地 Python/MNE，对 EEG 和 fNIRS 执行真实处理
+- **真实信号查看器** - 查看原始或处理后信号，支持完整时间轴移动、窗口缩放和单通道详情
+- **可验证的操作反馈** - 对处理请求显示执行阶段，并通过新的 `analysis_id` 校验是否真正完成
+- **可选结果保存** - 用户可以保存 FIF 与审计文件，或者只在内存中完成分析
+- **中英文界面** - Electron 工作台和动态交互文案支持中文与英文切换
 - **预处理草案** - 为 EEG、MEG 或 fNIRS 生成带假设、参数和人工复核提示的结构化流程
 - **知识库管理** - Markdown 文档自动解析、向量化并存入 Qdrant
 - **Markdown 回复** - Electron 安全显示标题、列表、表格、引用与代码块
@@ -83,7 +93,7 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统�
 1. **克隆项目**
 
 ```bash
-git clone <repository-url>
+git clone --branch v0.1 https://github.com/XCZchaos/NeuroFlow.git
 cd NeuroFlow
 ```
 
@@ -196,7 +206,7 @@ BrainVision 数据需要保留配套的 `.vmrk` 和 `.eeg` 文件；外部存储
   "qdrant": {
     "host": "127.0.0.1",
     "port": 6334,
-    "collection": "neuroflow"
+    "collection": "oncallagent"
   },
   "openai": {
     "api_key": "your-api-key",
@@ -277,14 +287,15 @@ POST /datasets/{dataset_id}/analyze
 Content-Type: application/json
 
 {
-  "analysis_type": "quality",
+  "analysis_type": "full",
   "highpass_hz": 1,
   "lowpass_hz": 40,
-  "notch_hz": 50
+  "notch_hz": 50,
+  "save_output": true
 }
 ```
 
-EEG 的 `full` 模式会执行自动参数选择、处理前质量评估、坏道检测、条件允许时的插值、工频陷波、IIR 带通、自动参考、保守 ICA 筛选和处理后质量复核。单步失败会保留上一个有效结果并降级继续，具体状态记录在 `execution_plan` 和同目录的 `.audit.json` 文件中。fNIRS 会按输入通道类型执行光密度、TDDR、Beer–Lambert 和 0.01–0.2 Hz 滤波。响应包含供 Electron 绘图的原始/处理后抽稀波形，完整结果写入 `outputs/<dataset_id>/` 下的 FIF 文件。波形预览不会发送给大模型。
+EEG 的 `full` 模式会执行自动参数选择、处理前质量评估、坏道检测、条件允许时的插值、工频陷波、IIR 带通、自动参考、保守 ICA 筛选和处理后质量复核。单步失败会保留上一个有效结果并降级继续，具体状态记录在 `execution_plan` 中。fNIRS 会按输入通道类型执行光密度、TDDR、Beer–Lambert 和 0.01–0.2 Hz 滤波。响应包含供 Electron 绘图的原始/处理后抽稀波形。`save_output=true` 时，完整结果与审计记录写入 `outputs/<dataset_id>/`；设为 `false` 时不会写入预处理文件。波形预览不会发送给大模型。
 
 ### 生成预处理草案
 
@@ -382,6 +393,7 @@ NeuroFlow/
 │       └── knowledge_index/        # 知识库索引服务
 ├── neuro_service/
 │   ├── inspect_dataset.py          # Python/MNE 格式适配器
+│   ├── preview_dataset.py          # 原始信号快速预览
 │   └── analyze_dataset.py          # Python/MNE EEG/fNIRS 分析器
 ├── pkg/                            # 配置、日志和通用工具
 ├── scripts/                        # 辅助脚本
@@ -487,9 +499,8 @@ func NewMyTool() (tool.InvokableTool, error) {
 ### 运行检查
 
 ```bash
-go test ./internal/server/dataset ./internal/handler ./internal/server/ai/tools ./internal/server/ai/agent/chat
-python -m py_compile neuro_service/inspect_dataset.py
-python -m py_compile neuro_service/analyze_dataset.py
+go test ./...
+python -m py_compile neuro_service/inspect_dataset.py neuro_service/preview_dataset.py neuro_service/analyze_dataset.py
 ```
 
 ```powershell
@@ -512,23 +523,23 @@ npm.cmd run check
 
 已实现：
 
-- Electron 神经信号工作台
-- EEG、MEG、fNIRS 常见格式的元数据读取
-- 数据集注册与 Agent 查询
-- 预处理草案生成
-- RAG 知识检索
-- Markdown 对话显示
+- Electron 中英文神经信号工作台与流式 Agent 对话
+- EEG、MEG、fNIRS 常见格式的元数据和真实波形读取
+- 完整时间轴移动、窗口缩放、原始/处理后对比和单通道详情
+- 数据集注册、可信元数据查询和结构化预处理草案
+- EEG 自动参数、坏道检测与插值、平均参考、ICA 筛选及质量比较
+- fNIRS 光密度、TDDR、Beer–Lambert、滤波和 HbO/HbR 汇总
+- 可选 FIF/审计文件保存、运行记录和 Agent 操作结果校验
+- RAG 知识检索以及安全 Markdown/代码块显示
 
 待实现：
 
-- 波形质量画像与自动坏道检测
-- 滤波、重参考、ICA 和坏道插值执行
 - MEG SSS/tSSS 与环境噪声处理
-- fNIRS 光密度、运动校正和血红蛋白转换
-- 小样本预处理预览与处理前后质量比较
-- 任务进度、取消、结果保存和可复现报告
+- 基于真实后端事件的逐步骤工具进度推送
+- 更完整的自动失败重试与参数搜索策略
+- 事件分段、Epoch/ERP 分析及可复现研究报告
 - BIDS 数据集与 BIDS Derivatives 管理
 
 ## License
 
-当前仓库尚未确定开源许可证。正式公开前，请先确认原始 OnCallAgent 代码的授权情况，并添加与所有代码来源兼容的 `LICENSE` 文件。
+本项目使用 [MIT License](LICENSE)。
