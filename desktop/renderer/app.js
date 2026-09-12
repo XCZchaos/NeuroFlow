@@ -25,6 +25,24 @@ const templates = {
     ['血红蛋白浓度转换','Modified Beer–Lambert', [['PPF（待确认）','6']]]
   ]}
 };
+// key 与 Python/MNE 审计日志中的步骤 ID 一致。只有 executable=true 的步骤
+// 会出现在真实 EEG 请求中；规划中的算法可以展示，但不能伪装成已经接入。
+const stepKeyByName={'带通滤波':'bandpass_filter','工频陷波':'notch_filter','坏道检测':'bad_channel_detection','坏道插值':'bad_channel_interpolation','独立成分分析':'ica_artifact_removal','重参考':'reference_selection','传感器质量检查':'sensor_quality','环境噪声抑制':'maxwell_filter','生理伪迹审查':'physiological_artifacts','光强转光密度':'optical_density','通道质量检查':'channel_quality','运动伪迹校正':'motion_correction','血红蛋白浓度转换':'beer_lambert'};
+const algorithmCatalog={
+  EEG:[
+    {key:'bad_channel_detection',name:'坏道检测',english:'Bad channel detection',params:[['方法','自动检测']],executable:true},
+    {key:'bad_channel_interpolation',name:'坏道插值',english:'Bad channel interpolation',params:[['条件','需要电极坐标']],executable:true},
+    {key:'notch_filter',name:'工频陷波',english:'Notch filter',params:[['频率 Hz','50']],executable:true},
+    {key:'bandpass_filter',name:'带通滤波',english:'Band-pass filter',params:[['低频 Hz','0.5'],['高频 Hz','40']],executable:true},
+    {key:'reference_selection',name:'重参考',english:'Re-reference',params:[['参考方式','平均参考']],executable:true},
+    {key:'ica_artifact_removal',name:'独立成分分析',english:'ICA artifact review',params:[['算法','FastICA'],['成分数','20']],executable:true},
+    {key:'resample',name:'重采样',english:'Resampling',params:[['目标 Hz','250']],executable:false},
+    {key:'epoching',name:'事件分段',english:'Epoching',params:[['起点 s','-0.2'],['终点 s','0.8']],executable:false},
+    {key:'baseline',name:'基线校正',english:'Baseline correction',params:[['区间','-0.2, 0']],executable:false},
+    {key:'autoreject',name:'Epoch 伪迹拒绝',english:'Epoch rejection',params:[['方法','待接入']],executable:false}
+  ],
+  MEG:[],fNIRS:[]
+};
 const clone = value => JSON.parse(JSON.stringify(value));
 const persistedSession=localStorage.getItem('neuroflow-session-id');
 const state = { mode:'EEG', steps:[], datasets:[], current:null, history:[], sessions:[], running:false, sending:false, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:persistedSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
@@ -34,7 +52,7 @@ function toast(message) { $('#toast').textContent = message; $('#toast').hidden 
 function element(tag, className, text) { const node = document.createElement(tag); if(className) node.className=className; if(text !== undefined) node.textContent=text; return node; }
 function setMode(mode) {
   if(state.running || state.sending) return toast(t('toast.waitSwitch'));
-  state.mode=mode; state.steps=templates[mode].steps.map(([name,english,params]) => ({name,english,params:clone(params),enabled:true}));
+  state.mode=mode; state.steps=templates[mode].steps.map(([name,english,params]) => ({key:stepKeyByName[name]||name,name,english,params:clone(params),enabled:true,executable:mode==='EEG'}));
   state.current=state.datasets.find(item=>item.mode===mode)||null;
   $$('.segmented [data-mode]').forEach(button=>button.classList.toggle('selected',button.dataset.mode===mode));
   $('#context-mode').textContent=i18n.getLocale()==='en'?`${mode} preprocessing`:`${mode} 预处理`; state.processed=false;state.analysis=state.current?.analysis||null;state.selectedChannel=null;state.singleChannel=false;state.signalWindow={start:0,duration:10,preview:null,loading:false};
@@ -68,13 +86,16 @@ function renderPipeline() {
     top.append(element('strong','',i18n.domain(step.name)),element('small','',step.english));
     const toggle=element('label','toggle'), checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.checked=step.enabled; checkbox.disabled=state.running; checkbox.setAttribute('aria-label',t('toggle.enable',{name:i18n.domain(step.name)}));
     checkbox.addEventListener('change',()=>{step.enabled=checkbox.checked;row.classList.toggle('disabled',!step.enabled);updateCount();});
-    toggle.append(checkbox,element('span'));top.append(toggle);content.append(top);
+    toggle.append(checkbox,element('span'));top.append(toggle);
+    const actions=element('div','step-actions');[['↑','pipeline.moveUp',-1],['↓','pipeline.moveDown',1]].forEach(([symbol,label,direction])=>{const button=element('button','step-action',symbol);button.type='button';button.title=t(label);button.disabled=state.running||(direction<0?index===0:index===state.steps.length-1);button.addEventListener('click',()=>movePipelineStep(index,index+direction));actions.append(button);});const remove=element('button','step-action','×');remove.type='button';remove.title=t('pipeline.remove');remove.disabled=state.running;remove.addEventListener('click',()=>{state.steps.splice(index,1);renderPipeline();});actions.append(remove);top.append(actions);content.append(top);
     const params=element('div','step-params');
     step.params.forEach(param=>{const label=element('label','param-label',i18n.domain(param[0]));const input=element('input','param-input');input.value=i18n.domain(param[1]);input.maxLength=100;input.disabled=state.running;input.setAttribute('aria-label',`${i18n.domain(step.name)} ${i18n.domain(param[0])}`);input.addEventListener('input',()=>param[1]=input.value);label.append(input);params.append(label);});
     content.append(params);row.append(content);list.append(row);
   }); updateCount();
 }
 function updateCount() { const count=state.steps.filter(step=>step.enabled).length;$('#enabled-count').textContent=t('steps.enabled',{count});$('#step-count').textContent=t('steps.count',{count:state.steps.length});$('#run-button').disabled=state.running||!count; }
+function movePipelineStep(from,to){if(to<0||to>=state.steps.length||state.running)return;const [step]=state.steps.splice(from,1);state.steps.splice(to,0,step);renderPipeline();}
+function renderAlgorithmLibrary(){const list=$('#algorithm-list');list.replaceChildren();const catalog=algorithmCatalog[state.mode]||[];if(!catalog.length){list.append(element('p','empty',i18n.getLocale()==='en'?'This modality currently uses its template; more executable steps are being integrated.':'当前模态暂时使用模板，更多可执行步骤仍在接入。'));return;}catalog.forEach(item=>{const exists=state.steps.some(step=>step.key===item.key),row=element('div','algorithm-option'),details=element('div');details.append(element('strong','',i18n.getLocale()==='en'?item.english:item.name),element('small','',item.executable?t('pipeline.available'):(i18n.getLocale()==='en'?'Planned · not executable':'规划中 · 尚不可执行')));const button=element('button','button light',exists?t('pipeline.added'):t('pipeline.add'));button.type='button';button.disabled=exists||!item.executable;button.addEventListener('click',()=>{state.steps.push({...clone(item),enabled:true});renderPipeline();renderAlgorithmLibrary();});row.append(details,button);list.append(row);});}
 function formatBytes(bytes) { return bytes<1048576?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1048576).toFixed(1)} MB`; }
 async function registerPath(path) {
   // 把本地路径交给本机 Go 服务。响应中只保留 dataset_id 和解析后的元数据。
@@ -410,6 +431,7 @@ async function requestAnalysis(){
     body.highpass_hz=numericPipelineParameter('带通滤波','低频 Hz',1);
     body.lowpass_hz=numericPipelineParameter('带通滤波','高频 Hz',45);
     body.notch_hz=numericPipelineParameter('工频陷波','频率 Hz',50);
+	body.enabled_steps=state.steps.filter(step=>step.enabled&&step.executable).map(step=>step.key);
   }
   const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await response.json().catch(()=>({message:`HTTP ${response.status}`}));
@@ -498,6 +520,8 @@ $('#file-input').addEventListener('change',event=>{importFiles(event.target.file
 document.addEventListener('dragover',event=>event.preventDefault());document.addEventListener('drop',event=>event.preventDefault());
 $('#dropzone').addEventListener('dragover',event=>{event.preventDefault();$('#dropzone').classList.add('dragging');});$('#dropzone').addEventListener('dragleave',()=>$('#dropzone').classList.remove('dragging'));$('#dropzone').addEventListener('drop',event=>{event.preventDefault();$('#dropzone').classList.remove('dragging');importFiles(event.dataTransfer.files);});
 $('#reset-pipeline').addEventListener('click',()=>{if(state.running)return toast(t('toast.resetWait'));const current=state.current;setMode(state.mode);state.current=current;renderDataset();toast(t('toast.resetDone'));});
+$('#add-pipeline-step').addEventListener('click',()=>{if(state.running)return toast(t('toast.wait'));renderAlgorithmLibrary();$('#algorithm-dialog').showModal();});
+$('#close-algorithms').addEventListener('click',()=>$('#algorithm-dialog').close());
 $('#export-config').addEventListener('click',()=>download(configSnapshot(),`neuroflow-${state.mode}-pipeline.json`));
 $('#run-button').addEventListener('click',runPipeline);
 $$('[data-signal]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.signal==='processed'&&!state.analysis?.preview?.processed)return toast(t('toast.runForProcessed'));state.processed=button.dataset.signal==='processed';state.signalWindow.preview=null;state.signalWindow.start=0;$$('[data-signal]').forEach(item=>item.classList.toggle('selected',item===button));drawSignal();renderDataset();if(state.singleChannel)loadSignalWindow();}));

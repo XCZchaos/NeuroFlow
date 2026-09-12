@@ -140,9 +140,13 @@ def eeg_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
     effective_notch = notch_hz
     if effective_notch == 0:
         effective_notch = float(raw.info.get("line_freq") or 50.0)
+    # 低采样率记录可能无法表示 50/60 Hz。此时跳过陷波，不能为了满足默认值
+    # 使用等于或超过 Nyquist 的频率；带通与频谱指标仍可继续执行。
     if effective_notch <= 0 or effective_notch >= nyquist:
-        raise ValueError(f"notch_hz must be between 0 and Nyquist ({nyquist:g} Hz)")
-    data = notch_filter(demeaned, Fs=sfreq, freqs=[effective_notch], method="iir", verbose=False)
+        effective_notch = None
+        data = demeaned.copy()
+    else:
+        data = notch_filter(demeaned, Fs=sfreq, freqs=[effective_notch], method="iir", verbose=False)
     data = filter_data(data, sfreq=sfreq, l_freq=highpass_hz, h_freq=effective_lowpass,
                        method="iir", verbose=False)
 
@@ -221,7 +225,8 @@ def eeg_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
 
 def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
                       left_channel: str | None, right_channel: str | None,
-                      highpass_hz: float, lowpass_hz: float, notch_hz: float):
+                      highpass_hz: float, lowpass_hz: float, notch_hz: float,
+                      enabled_steps: set[str] | None = None):
     """执行可审计的 EEG 自动预处理，并在单个步骤失败时安全降级。"""
     picks = mne.pick_types(raw.info, eeg=True, meg=False, fnirs=False, exclude=[])
     if not len(picks):
@@ -235,6 +240,8 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
 
     audit = []
     plan = []
+    enabled = enabled_steps or {"bad_channel_detection", "bad_channel_interpolation", "notch_filter",
+                                "bandpass_filter", "reference_selection", "ica_artifact_removal"}
     def record(step, status, detail, attempt=1):
         entry = {"step": step, "status": status, "detail": detail, "attempt": attempt}
         audit.append(entry); plan.append(entry.copy())
@@ -290,15 +297,15 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
     ranked = sorted(candidates, key=lambda index: (bool(flat[index]), bool(noisy[index]), -correlations[index]), reverse=True)
     # 平坦通道没有可用信号，必须全部标记；对噪声/低相关判据则限制到 20%，
     # 防止参考错误或特殊范式导致大面积误判。
-    bad_indices = sorted(set(np.flatnonzero(flat).tolist() + ranked[:max_bad]))
+    bad_indices = sorted(set(np.flatnonzero(flat).tolist() + ranked[:max_bad])) if "bad_channel_detection" in enabled else []
     bad_names = [names[index] for index in bad_indices]
-    record("bad_channel_detection", "completed", f"detected {len(bad_names)}: {', '.join(bad_names) or 'none'}")
+    record("bad_channel_detection", "completed" if "bad_channel_detection" in enabled else "skipped", f"detected {len(bad_names)}: {', '.join(bad_names) or 'none'}" if "bad_channel_detection" in enabled else "disabled by pipeline")
 
     info = mne.pick_info(raw.info, picks, copy=True)
     working = mne.io.RawArray(demeaned.copy(), info, verbose=False)
     working.info["bads"] = bad_names
     interpolation = {"requested": bool(bad_names), "performed": False, "channels": bad_names}
-    if bad_names:
+    if bad_names and "bad_channel_interpolation" in enabled:
         try:
             # interpolate_bads 需要 montage/digitization；缺失坐标时保留 bad 标记并继续处理。
             working.interpolate_bads(reset_bads=True, mode="accurate", verbose=False)
@@ -308,27 +315,36 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
             interpolation["reason"] = str(error)
             record("bad_channel_interpolation", "degraded", f"retry without interpolation; kept bad-channel marks: {error}", 2)
     else:
-        record("bad_channel_interpolation", "skipped", "no bad channels detected")
+        reason = "disabled by pipeline" if "bad_channel_interpolation" not in enabled else "no bad channels detected"
+        record("bad_channel_interpolation", "skipped", reason)
 
-    if selected_notch:
+    if selected_notch and "notch_filter" in enabled:
         working.notch_filter([selected_notch], method="iir", verbose=False)
         record("notch_filter", "completed", f"{selected_notch:g} Hz IIR")
-    working.filter(effective_high, effective_low, method="iir", verbose=False)
-    record("bandpass_filter", "completed", f"{effective_high:g}-{effective_low:g} Hz IIR")
+    elif "notch_filter" not in enabled:
+        record("notch_filter", "skipped", "disabled by pipeline")
+    else:
+        record("notch_filter", "skipped", "no valid line-frequency peak selected")
+    if "bandpass_filter" in enabled:
+        working.filter(effective_high, effective_low, method="iir", verbose=False)
+        record("bandpass_filter", "completed", f"{effective_high:g}-{effective_low:g} Hz IIR")
+    else:
+        record("bandpass_filter", "skipped", "disabled by pipeline")
 
     # 平均参考适用于大多数无专用参考电极的多通道 EEG；通道太少时保持原参考。
     reference = "unchanged"
-    if len(picks) - len(bad_names) >= 3:
+    if "reference_selection" in enabled and len(picks) - len(bad_names) >= 3:
         working.set_eeg_reference("average", projection=False, verbose=False)
         reference = "average"
         record("reference_selection", "completed", "average reference selected because at least 3 usable EEG channels are available")
     else:
-        record("reference_selection", "skipped", "fewer than 3 usable EEG channels")
+        reason = "disabled by pipeline" if "reference_selection" not in enabled else "fewer than 3 usable EEG channels"
+        record("reference_selection", "skipped", reason)
 
     ica_report = {"performed": False, "excluded_components": [], "method": "FastICA conservative automatic screening"}
     duration = working.n_times / sfreq
     usable_count = len(picks) - len(bad_names)
-    if profile == "full" and duration >= 20 and usable_count >= 4 and np.any(np.var(working.get_data(), axis=1) > np.finfo(float).eps):
+    if "ica_artifact_removal" in enabled and profile == "full" and duration >= 20 and usable_count >= 4 and np.any(np.var(working.get_data(), axis=1) > np.finfo(float).eps):
         try:
             n_components = min(20, usable_count - 1)
             ica = mne.preprocessing.ICA(n_components=n_components, method="fastica", random_state=97, max_iter=500)
@@ -357,7 +373,7 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
             ica_report["reason"] = str(error)
             record("ica_artifact_removal", "degraded", f"retry without ICA; retained filtered and referenced data: {error}", 2)
     else:
-        reason = "full profile required" if profile != "full" else "requires >=20 s, >=4 usable channels, and non-flat data"
+        reason = "disabled by pipeline" if "ica_artifact_removal" not in enabled else ("full profile required" if profile != "full" else "requires >=20 s, >=4 usable channels, and non-flat data")
         ica_report["reason"] = reason
         record("ica_artifact_removal", "skipped", reason)
 
@@ -473,15 +489,17 @@ def main() -> int:
     parser.add_argument("--lowpass-hz", type=float, default=45.0)
     parser.add_argument("--notch-hz", type=float, default=0.0,
                         help="0 uses the file line frequency or 50 Hz")
+    parser.add_argument("--steps", help="comma-separated executable EEG pipeline step IDs")
     parser.add_argument("--output", help="optional path for the processed FIF file")
     args = parser.parse_args()
     try:
         raw = load_raw(Path(args.source).resolve())
         start, stop, sfreq = select_range(raw, args.start, args.end)
         if args.modality == "EEG":
+            selected_steps = {item.strip() for item in (args.steps or "").split(",") if item.strip()} or None
             result, raw_data, processed_data, processed_info = eeg_auto_analysis(
                 raw, start, stop, sfreq, args.profile, args.left_channel,
-                args.right_channel, args.highpass_hz, args.lowpass_hz, args.notch_hz)
+                args.right_channel, args.highpass_hz, args.lowpass_hz, args.notch_hz, selected_steps)
             preview = {
                 "raw": build_preview(raw_data * 1e6, result["channel_names"], sfreq, "µV"),
                 "processed": build_preview(processed_data * 1e6, result["channel_names"], sfreq, "µV"),

@@ -25,16 +25,17 @@ var latestAnalysis sync.Map
 // NeuroAnalysisInput 是大模型可以填写的 function-call 参数。波形和本地路径
 // 不进入参数；dataset_id 由后端解析为用户已经导入的本地文件。
 type NeuroAnalysisInput struct {
-	DatasetID    string  `json:"dataset_id" jsonschema:"description=已导入数据集的 dataset_id"`
-	AnalysisType string  `json:"analysis_type" jsonschema:"description=summary 基础指标；quality 增加质量检查；full 执行 EEG 自动坏道、参考、ICA 与质量对比；默认 full"`
-	StartSeconds float64 `json:"start_seconds,omitempty" jsonschema:"description=分析起点（秒），默认为 0"`
-	EndSeconds   float64 `json:"end_seconds,omitempty" jsonschema:"description=分析终点（秒），0 表示记录末尾；长数据应分段调用"`
-	LeftChannel  string  `json:"left_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的左侧通道名，例如 F3"`
-	RightChannel string  `json:"right_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的右侧通道名，例如 F4"`
-	HighpassHz   float64 `json:"highpass_hz,omitempty" jsonschema:"description=EEG 高通截止频率 Hz；省略或 0 时使用 1 Hz"`
-	LowpassHz    float64 `json:"lowpass_hz,omitempty" jsonschema:"description=EEG 低通截止频率 Hz；省略或 0 时使用 45 Hz，并自动限制在 Nyquist 以下"`
-	NotchHz      float64 `json:"notch_hz,omitempty" jsonschema:"description=EEG 工频陷波频率 Hz；省略或 0 时使用文件 line_freq，缺失时使用 50 Hz"`
-	SaveOutput   *bool   `json:"save_output,omitempty" jsonschema:"description=是否保存处理后的 FIF 和审计文件；默认 true；用户明确要求不保存时必须设为 false"`
+	DatasetID    string   `json:"dataset_id" jsonschema:"description=已导入数据集的 dataset_id"`
+	AnalysisType string   `json:"analysis_type" jsonschema:"description=summary 基础指标；quality 增加质量检查；full 执行 EEG 自动坏道、参考、ICA 与质量对比；默认 full"`
+	StartSeconds float64  `json:"start_seconds,omitempty" jsonschema:"description=分析起点（秒），默认为 0"`
+	EndSeconds   float64  `json:"end_seconds,omitempty" jsonschema:"description=分析终点（秒），0 表示记录末尾；长数据应分段调用"`
+	LeftChannel  string   `json:"left_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的左侧通道名，例如 F3"`
+	RightChannel string   `json:"right_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的右侧通道名，例如 F4"`
+	HighpassHz   float64  `json:"highpass_hz,omitempty" jsonschema:"description=EEG 高通截止频率 Hz；省略或 0 时使用 1 Hz"`
+	LowpassHz    float64  `json:"lowpass_hz,omitempty" jsonschema:"description=EEG 低通截止频率 Hz；省略或 0 时使用 45 Hz，并自动限制在 Nyquist 以下"`
+	NotchHz      float64  `json:"notch_hz,omitempty" jsonschema:"description=EEG 工频陷波频率 Hz；省略或 0 时使用文件 line_freq，缺失时使用 50 Hz"`
+	EnabledSteps []string `json:"enabled_steps,omitempty" jsonschema:"description=可选的 EEG 执行步骤：bad_channel_detection、bad_channel_interpolation、notch_filter、bandpass_filter、reference_selection、ica_artifact_removal；省略时执行完整安全流程"`
+	SaveOutput   *bool    `json:"save_output,omitempty" jsonschema:"description=是否保存处理后的 FIF 和审计文件；默认 true；用户明确要求不保存时必须设为 false"`
 }
 
 // RunNeuroAnalysisTool 执行 NeuroFlow 自己的 Python/MNE 算法，并把紧凑的指标
@@ -90,6 +91,18 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 		// 0 会原样传给 Python，表示让自动流程结合采样率和频谱质量选择参数。
 		args = append(args, "--highpass-hz", fmt.Sprintf("%g", input.HighpassHz),
 			"--lowpass-hz", fmt.Sprintf("%g", input.LowpassHz), "--notch-hz", fmt.Sprintf("%g", input.NotchHz))
+		if len(input.EnabledSteps) > 0 {
+			allowed := map[string]bool{"bad_channel_detection": true, "bad_channel_interpolation": true, "notch_filter": true, "bandpass_filter": true, "reference_selection": true, "ica_artifact_removal": true}
+			steps := make([]string, 0, len(input.EnabledSteps))
+			for _, step := range input.EnabledSteps {
+				step = strings.TrimSpace(step)
+				if !allowed[step] {
+					return nil, fmt.Errorf("不支持的 EEG 执行步骤: %s", step)
+				}
+				steps = append(steps, step)
+			}
+			args = append(args, "--steps", strings.Join(steps, ","))
+		}
 	}
 	if strings.TrimSpace(input.LeftChannel) != "" || strings.TrimSpace(input.RightChannel) != "" {
 		if strings.TrimSpace(input.LeftChannel) == "" || strings.TrimSpace(input.RightChannel) == "" {
