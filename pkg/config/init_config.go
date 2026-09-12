@@ -110,11 +110,11 @@ func setDefaults(v *viper.Viper) {
 
 	// OpenAI 默认值
 	v.SetDefault("openai.api_key", "")
-	v.SetDefault("openai.model", "minimax/minimax-m2.1")
-	v.SetDefault("openai.api_base", "https://api.qnaigc.com/v1")
+	v.SetDefault("openai.model", "gpt-5.6-sol")
+	v.SetDefault("openai.api_base", "https://api.chatanywhere.tech/v1")
 	// MaxTokens 是单次回答的生成上限，不是上下文窗口大小。
-	// 2048 足以覆盖多数数据解释和预处理方案，又能避免异常冗长的响应。
-	v.SetDefault("openai.max_tokens", 2048)
+	// 深度分析模式需要容纳证据、步骤、风险和验证方案；即时模式由提示词主动收敛篇幅。
+	v.SetDefault("openai.max_tokens", 4096)
 	v.SetDefault("openai.temperature", 0.3)
 
 	// Prometheus 默认值

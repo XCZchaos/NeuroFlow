@@ -45,7 +45,8 @@ const algorithmCatalog={
 };
 const clone = value => JSON.parse(JSON.stringify(value));
 const persistedSession=localStorage.getItem('neuroflow-session-id');
-const state = { mode:'EEG', steps:[], datasets:[], current:null, history:[], sessions:[], running:false, sending:false, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:persistedSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
+const persistedResponseMode=localStorage.getItem('neuroflow-response-mode')==='deep'?'deep':'quick';
+const state = { mode:'EEG', responseMode:persistedResponseMode, steps:[], datasets:[], current:null, history:[], sessions:[], running:false, sending:false, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:persistedSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
 localStorage.setItem('neuroflow-session-id',state.session);
 let toastTimer;
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').hidden = true, 4000); }
@@ -94,6 +95,7 @@ function renderPipeline() {
   }); updateCount();
 }
 function updateCount() { const count=state.steps.filter(step=>step.enabled).length;$('#enabled-count').textContent=t('steps.enabled',{count});$('#step-count').textContent=t('steps.count',{count:state.steps.length});$('#run-button').disabled=state.running||!count; }
+function setResponseMode(mode){state.responseMode=mode==='deep'?'deep':'quick';localStorage.setItem('neuroflow-response-mode',state.responseMode);$$('[data-response-mode]').forEach(button=>button.classList.toggle('selected',button.dataset.responseMode===state.responseMode));$('#response-mode-hint').textContent=t(state.responseMode==='deep'?'response.deepHint':'response.quickHint');}
 function movePipelineStep(from,to){if(to<0||to>=state.steps.length||state.running)return;const [step]=state.steps.splice(from,1);state.steps.splice(to,0,step);renderPipeline();}
 function renderAlgorithmLibrary(){const list=$('#algorithm-list');list.replaceChildren();const catalog=algorithmCatalog[state.mode]||[];if(!catalog.length){list.append(element('p','empty',i18n.getLocale()==='en'?'This modality currently uses its template; more executable steps are being integrated.':'当前模态暂时使用模板，更多可执行步骤仍在接入。'));return;}catalog.forEach(item=>{const exists=state.steps.some(step=>step.key===item.key),row=element('div','algorithm-option'),details=element('div');details.append(element('strong','',i18n.getLocale()==='en'?item.english:item.name),element('small','',item.executable?t('pipeline.available'):(i18n.getLocale()==='en'?'Planned · not executable':'规划中 · 尚不可执行')));const button=element('button','button light',exists?t('pipeline.added'):t('pipeline.add'));button.type='button';button.disabled=exists||!item.executable;button.addEventListener('click',()=>{state.steps.push({...clone(item),enabled:true});renderPipeline();renderAlgorithmLibrary();});row.append(details,button);list.append(row);});}
 function formatBytes(bytes) { return bytes<1048576?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1048576).toFixed(1)} MB`; }
@@ -336,7 +338,7 @@ async function sendMessage(text) {
       // 明确标注证据边界：元数据可以回答通道数和采样率，但不能证明数据质量良好。
       const evidence=meta?`已由 ${meta.reader} 读取：格式=${meta.format}，模态=${meta.modality}，通道数=${meta.channel_count}，采样率=${meta.sampling_rate_hz} Hz，时长=${meta.duration_seconds.toFixed(3)} 秒，样本数=${meta.sample_count}，通道类型=${JSON.stringify(meta.channel_type_counts)}，标注数=${meta.annotation_count}，已标记坏道=${JSON.stringify(meta.bad_channels)}。dataset_id=${state.current.datasetId}。这些是文件元数据，尚未执行信号质量分析或预处理。`:`当前只有用户选择的模态 ${state.mode}，没有已解析的数据文件。`;
       requestTimeout=setTimeout(()=>state.streamController?.abort('timeout'),120000);
-      const response=await fetch(`${state.url}/chatStream`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({question:`[界面语言：${i18n.getLocale()==='en'?'English':'简体中文'}；请使用相同语言回答。]\n[数据上下文：${evidence}]\n${text}`,id:state.session,dataset_id:state.current?.datasetId||''}),signal:state.streamController.signal});
+      const response=await fetch(`${state.url}/chatStream`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({question:`[界面语言：${i18n.getLocale()==='en'?'English':'简体中文'}；请使用相同语言回答。]\n[数据上下文：${evidence}]\n${text}`,id:state.session,dataset_id:state.current?.datasetId||'',response_mode:state.responseMode}),signal:state.streamController.signal});
       if(!response.ok)throw new Error(t('error.backendHttp',{status:response.status}));
       let renderFrame=0,streamError='';
       await consumeSSE(response,(event,data)=>{
@@ -488,7 +490,7 @@ function bindI18n() {
   [
     ['.topbar-path .muted','nav.workspace'],['#page-title','view.title'],['.page-heading p','view.subtitle'],['#import-top','action.import'],['.mode-row .subtle','mode.keep'],['#change-file','action.choose'],['#reset-pipeline','action.reset'],['#export-config','action.export'],
     ['.metadata>div:nth-child(1)>span','meta.channels'],['.metadata>div:nth-child(2)>span','meta.rate'],['.metadata>div:nth-child(3)>span','meta.duration'],['.metadata>div:nth-child(4)>span','meta.format'],
-    ['.signal-tabs [data-signal="raw"]','signal.raw'],['.signal-tabs [data-signal="processed"]','signal.processed'],['.chart-footer span:last-child','signal.time'],['[data-prompt]:nth-child(1)','prompt.pipeline'],['[data-prompt]:nth-child(2)','prompt.quality'],['.composer-footer span','chat.hint'],['.agent-footnote','chat.notice'],
+    ['.signal-tabs [data-signal="raw"]','signal.raw'],['.signal-tabs [data-signal="processed"]','signal.processed'],['.chart-footer span:last-child','signal.time'],['[data-prompt]:nth-child(1)','prompt.pipeline'],['[data-prompt]:nth-child(2)','prompt.quality'],['[data-response-mode="quick"]','response.quick'],['[data-response-mode="deep"]','response.deep'],['.composer-footer span:nth-child(2)','chat.hint'],['.agent-footnote','chat.notice'],
     ['.workspace small','workspace.local'],['.local-card strong','privacy.title'],['.local-card p','privacy.body'],['.profile small','profile.space'],['.pipeline-description','pipeline.help'],['#signal-caption','signal.caption'],['.chart-footer span:first-child','signal.disclaimer'],['.note-card strong','note.title'],['.note-card p','note.body'],
     ['#run-title','run.ready'],['#run-subtitle','run.demo'],['#run-progress','run.estimate'],['#run-button','run.start'],['#datasets-view .section-heading h2','section.sessionData'],['#import-list','action.import'],['#datasets-view>p','datasets.note'],['#history-view .section-heading h2','nav.history'],['#history-view .pill','session.label'],
     ['#settings-form .section-heading h2','settings.title'],['#settings-form>p:not(.settings-note)','settings.description'],['#settings-form .settings-note','settings.note'],['#settings-form .field-label[for="backend-mode"]','settings.mode'],['#settings-form .field-label[for="backend-url"]','settings.url'],['#backend-mode option[value="demo"]','settings.demo'],['#backend-mode option[value="backend"]','settings.backend'],['#settings-form button[type="submit"]','action.save'],
@@ -504,6 +506,7 @@ function refreshLocale() {
   $('#agent-mode').textContent=state.backend==='demo'?t('agent.demo'):t('agent.backend');
   setConnectionState(state.backend==='demo'?'demo':$('#backend-dot').dataset.status||'checking',state.backend==='demo'?t('status.demo'):t(`status.${$('#backend-dot').dataset.status||'checking'}`));
   $('#language-toggle').textContent=i18n.getLocale()==='en'?'中':'EN';
+	setResponseMode(state.responseMode);
   document.title=i18n.getLocale()==='en'?'NeuroFlow · Neural Signal Workspace':'NeuroFlow · 神经信号工作台';
   const english=i18n.getLocale()==='en';
   $$('.segmented [data-mode] span').forEach(span=>{const key={EEG:'mode.eeg',MEG:'mode.meg',fNIRS:'mode.fnirs'}[span.parentElement.dataset.mode];span.hidden=english;span.textContent=t(key);});
@@ -511,6 +514,7 @@ function refreshLocale() {
   $$('.avatar').forEach(avatar=>avatar.textContent=english?'R':'研');
 }
 $$('[data-mode]').forEach(button=>button.addEventListener('click',()=>setMode(button.dataset.mode)));
+$$('[data-response-mode]').forEach(button=>button.addEventListener('click',()=>{if(!state.sending)setResponseMode(button.dataset.responseMode);}));
 $$('[data-view]').forEach(button=>button.addEventListener('click',()=>setView(button.dataset.view)));
 for(const id of ['import-top','change-file','import-list'])$(`#${id}`).addEventListener('click',async()=>{
   if(globalThis.desktop?.selectFiles){const paths=await globalThis.desktop.selectFiles();await importPaths(paths);}
@@ -554,4 +558,4 @@ $('#language-toggle').addEventListener('click',()=>i18n.setLocale(i18n.getLocale
 document.addEventListener('neuroflow:localechange',refreshLocale);
 new ResizeObserver(drawSignal).observe($('#signal-canvas'));
 try{const saved=JSON.parse(localStorage.getItem('neuroflow-connection')||'null');if(saved?.backend)state.backend=saved.backend;if(saved?.url)state.url=saved.url;}catch{}
-bindI18n();applyAppearance();setMode('EEG');renderLists();refreshLocale();checkBackend();appendMessage('assistant',i18n.getLocale()==='en'?'Hello, I am the NeuroFlow assistant.\n\nImport an EEG or fNIRS dataset to inspect metadata and run local preprocessing. MEG metadata inspection is available; its preprocessing pipeline is still being implemented.':'你好，我是 NeuroFlow 助手。\n\n你可以导入 EEG 或 fNIRS 数据读取元数据并运行本地预处理。MEG 目前支持元数据解析，预处理流程仍在实现中。');
+bindI18n();applyAppearance();setMode('EEG');setResponseMode(state.responseMode);renderLists();refreshLocale();checkBackend();appendMessage('assistant',i18n.getLocale()==='en'?'Hello, I am the NeuroFlow assistant.\n\nImport an EEG or fNIRS dataset to inspect metadata and run local preprocessing. MEG metadata inspection is available; its preprocessing pipeline is still being implemented.':'你好，我是 NeuroFlow 助手。\n\n你可以导入 EEG 或 fNIRS 数据读取元数据并运行本地预处理。MEG 目前支持元数据解析，预处理流程仍在实现中。');

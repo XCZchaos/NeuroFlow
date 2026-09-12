@@ -9,4 +9,6 @@ type UserMessage struct {
 	// Memory 是 SQLite 中的长期摘要、研究目标、偏好和数据集绑定。
 	// 它与最近原始消息分开注入，避免扩大 history 窗口。
 	Memory string `json:"memory"`
+	// ResponseMode 只控制回答深度和工具工作流，不要求模型暴露内部思维链。
+	ResponseMode string `json:"response_mode"`
 }

@@ -18,7 +18,7 @@
     "api_key": "your-api-key",
     "model": "gpt-5.6-sol",
     "api_base": "https://api.chatanywhere.tech/v1",
-    "max_tokens": 2048,
+    "max_tokens": 4096,
     "temperature": 0.3
   },
   "prometheus": {

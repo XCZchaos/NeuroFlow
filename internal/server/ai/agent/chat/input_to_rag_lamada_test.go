@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -10,6 +11,18 @@ func TestBuildKnowledgeQueryAddsDomainVocabulary(t *testing.T) {
 	for _, expected := range []string{"modality:EEG", "stage:bad_channels"} {
 		if !strings.Contains(query, expected) {
 			t.Fatalf("检索查询缺少 %q: %s", expected, query)
+		}
+	}
+}
+
+func TestDeepModeAddsAnalysisDimensions(t *testing.T) {
+	query, err := newInputToRagLambda(context.Background(), &UserMessage{Query: "如何处理脑电坏道", ResponseMode: "deep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"modality:EEG", "stage:bad_channels", "constraints", "validation", "audit"} {
+		if !strings.Contains(query, expected) {
+			t.Fatalf("深度检索缺少 %q: %s", expected, query)
 		}
 	}
 }

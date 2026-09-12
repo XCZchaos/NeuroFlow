@@ -14,8 +14,8 @@ import (
 )
 
 type ChatServer interface {
-	Chat(ctx context.Context, question string, id string) (string, error)
-	ChatSream(ctx context.Context, question string, id string, msgChan *chan string, doneChan *chan struct{}) error
+	Chat(ctx context.Context, question string, id string, responseMode string) (string, error)
+	ChatSream(ctx context.Context, question string, id string, responseMode string, msgChan *chan string, doneChan *chan struct{}) error
 	CreateSession(ctx context.Context, id, title string) (Session, error)
 	ListSessions(ctx context.Context) ([]Session, error)
 	DeleteSession(ctx context.Context, id string) error
@@ -35,7 +35,7 @@ func NewChatServer(log *logrus.Logger, runner compose.Runnable[*chat.UserMessage
 	return &chatServer{logger: log, runner: runner, memory: memory}
 }
 
-func (c *chatServer) Chat(ctx context.Context, question string, id string) (string, error) {
+func (c *chatServer) Chat(ctx context.Context, question string, id string, responseMode string) (string, error) {
 	session, err := c.memory.EnsureSession(ctx, id)
 	if err != nil {
 		return "", err
@@ -50,10 +50,11 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string) (stri
 	}
 
 	output, err := c.runner.Invoke(ctx, &chat.UserMessage{
-		ID:      id,
-		Query:   question,
-		History: history,
-		Memory:  formatLongTermMemory(session, longTerm),
+		ID:           id,
+		Query:        question,
+		History:      history,
+		Memory:       formatLongTermMemory(session, longTerm),
+		ResponseMode: normalizeResponseMode(responseMode),
 	})
 	if err != nil {
 		c.logger.Errorf("Agent 调用失败, session_id=%s, err=%v", id, err)
@@ -66,7 +67,7 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string) (stri
 	return output.Content, nil
 }
 
-func (c *chatServer) ChatSream(ctx context.Context, question string, id string, msgChan *chan string, doneChan *chan struct{}) error {
+func (c *chatServer) ChatSream(ctx context.Context, question string, id string, responseMode string, msgChan *chan string, doneChan *chan struct{}) error {
 	defer close(*msgChan)
 	defer func() {
 		select {
@@ -88,10 +89,11 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 		return err
 	}
 	output, err := c.runner.Stream(ctx, &chat.UserMessage{
-		ID:      id,
-		Query:   question,
-		History: history,
-		Memory:  formatLongTermMemory(session, longTerm),
+		ID:           id,
+		Query:        question,
+		History:      history,
+		Memory:       formatLongTermMemory(session, longTerm),
+		ResponseMode: normalizeResponseMode(responseMode),
 	})
 	if err != nil {
 		c.logger.Errorf("Agent 流式调用失败, session_id=%s, err=%v", id, err)
@@ -121,6 +123,13 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 			return nil
 		}
 	}
+}
+
+func normalizeResponseMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "deep") {
+		return "deep"
+	}
+	return "quick"
 }
 
 func (c *chatServer) CreateSession(ctx context.Context, id, title string) (Session, error) {

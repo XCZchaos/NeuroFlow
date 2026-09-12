@@ -31,9 +31,10 @@ func NewChatHandler(chat chatServer.ChatServer) ChatHandler {
 }
 
 type ChatRequest struct {
-	Question  string `json:"question" binding:"required"`
-	ID        string `json:"id" binding:"required"`
-	DatasetID string `json:"dataset_id"`
+	Question     string `json:"question" binding:"required"`
+	ID           string `json:"id" binding:"required"`
+	DatasetID    string `json:"dataset_id"`
+	ResponseMode string `json:"response_mode"`
 }
 
 func (c *chatHandler) Chat() gin.HandlerFunc {
@@ -53,7 +54,7 @@ func (c *chatHandler) Chat() gin.HandlerFunc {
 			}
 		}
 
-		message, err := c.chat.Chat(ctx.Request.Context(), request.Question, request.ID)
+		message, err := c.chat.Chat(ctx.Request.Context(), request.Question, request.ID, request.ResponseMode)
 		if err != nil {
 			ctx.JSON(http.StatusBadGateway, gin.H{
 				"code":    "AGENT_CALL_FAILED",
@@ -194,7 +195,7 @@ func (c *chatHandler) ChatSream() gin.HandlerFunc {
 		done := make(chan struct{}, 1)
 		errors := make(chan error, 1)
 		go func() {
-			errors <- c.chat.ChatSream(ctx.Request.Context(), request.Question, request.ID, &messages, &done)
+			errors <- c.chat.ChatSream(ctx.Request.Context(), request.Question, request.ID, request.ResponseMode, &messages, &done)
 		}()
 
 		for message := range messages {

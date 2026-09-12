@@ -8,7 +8,11 @@ import (
 )
 
 func newInputToRagLambda(ctx context.Context, input *UserMessage, opts ...compose.LambdaOpt) (outPut string, err error) {
-	return buildKnowledgeQuery(input.Query), nil
+	query := buildKnowledgeQuery(input.Query)
+	if input.ResponseMode == "deep" {
+		query += "\ndeep analysis context: prerequisites constraints risks validation audit"
+	}
+	return query, nil
 }
 
 // buildKnowledgeQuery 为中文自然语言问题补充知识库中使用的标准术语。
