@@ -19,7 +19,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config *config.Config, runner compose.Runnable[document.Source, bool], runnerChat compose.Runnable[*chat.UserMessage, *schema.Message], model *openai.ChatModel, retriever *qdrant_retriever.Retriever) {
+func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config *config.Config, runner compose.Runnable[document.Source, bool], runnerChat compose.Runnable[*chat.UserMessage, *schema.Message], model *openai.ChatModel, retriever *qdrant_retriever.Retriever, memory chatServer.MemoryStore) {
 	//cors
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowOrigins = []string{"*"}
@@ -37,10 +37,17 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	uploderHandler := handler.NewFileUploader("./uploads/", uploder)
 	r.POST("/upload", uploderHandler.Upload())
 	//对话
-	chater := chatServer.NewChatServer(loger, runnerChat)
+	chater := chatServer.NewChatServer(loger, runnerChat, memory)
 	chaterHandler := handler.NewChatHandler(chater)
 	r.POST("/chat", chaterHandler.Chat())
 	r.POST("/chatStream", chaterHandler.ChatSream())
+	r.GET("/sessions", chaterHandler.ListSessions())
+	r.POST("/sessions", chaterHandler.CreateSession())
+	r.DELETE("/sessions/:id", chaterHandler.DeleteSession())
+	r.GET("/sessions/:id/messages", chaterHandler.SessionMessages())
+	r.PUT("/sessions/:id/dataset", chaterHandler.BindDataset())
+	r.GET("/sessions/:id/memory", chaterHandler.GetSessionMemory())
+	r.PUT("/sessions/:id/memory", chaterHandler.UpdateSessionMemory())
 	r.POST("/agent/preprocessing/draft", handler.NeuroPreprocessingDraft())
 	// 数据集接口与普通知识库上传分开：这里读取的是神经信号元数据，
 	// 不会把二进制波形当作文档切片写入向量数据库。

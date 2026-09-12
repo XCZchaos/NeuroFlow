@@ -8,6 +8,7 @@ import (
 	"OnCallAgent/internal/server/ai/agent/chat"
 	knowledgeindex "OnCallAgent/internal/server/ai/agent/knowledge_index"
 	"OnCallAgent/internal/server/ai/embeder"
+	"OnCallAgent/internal/server/chatServer"
 	"OnCallAgent/internal/server/model"
 	"OnCallAgent/pkg/config"
 	"OnCallAgent/pkg/log"
@@ -66,9 +67,15 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// SQLite 同时保存完整消息、近期上下文之外的摘要、结构化偏好和数据集绑定。
+	memoryStore, err := chatServer.NewSQLiteMemoryStore("./data/neuroflow.db")
+	if err != nil {
+		panic(err)
+	}
+	defer memoryStore.Close()
 	// 初始化gin
 	r := gin.Default()
-	router.InitRouter(ctx, r, log, config, runnerRAG, runner, chatModel, run)
+	router.InitRouter(ctx, r, log, config, runnerRAG, runner, chatModel, run, memoryStore)
 	// 启动 HTTP 服务
 	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 	if err = r.Run(addr); err != nil {

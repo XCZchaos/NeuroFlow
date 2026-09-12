@@ -18,6 +18,7 @@
       <button class="nav-item active" data-view="workspace"><span>▦</span>预处理工作台</button>
       <button class="nav-item" data-view="datasets"><span>▱</span>数据管理 <b id="dataset-count">1</b></button>
       <button class="nav-item" data-view="history"><span>◷</span>运行记录</button>
+      <button class="nav-item" data-view="sessions"><span>◫</span>长期对话</button>
     </nav>
     <div class="nav-label template-label">处理模板 <span>03</span></div>
     <button class="template" data-mode="EEG"><i class="dot green"></i>EEG · 脑电</button>
@@ -45,6 +46,7 @@
       </section>
       <section id="datasets-view" class="card alternative-view" hidden><div class="section-heading"><h2>本次会话的数据</h2><button class="button primary" id="import-list">＋ 导入数据</button></div><p class="muted">仅保存文件元信息；文件内容尚未解析。刷新或关闭窗口后清空。</p><div id="dataset-list"></div></section>
       <section id="history-view" class="card alternative-view" hidden><div class="section-heading"><h2>运行记录</h2><span class="pill neutral">本次会话</span></div><div id="history-list"></div></section>
+      <section id="sessions-view" class="card alternative-view" hidden><div class="section-heading"><h2 data-i18n="session.history">长期对话</h2><button class="button primary" id="new-session" data-i18n="session.new">＋ 新建对话</button></div><p class="muted" data-i18n="session.description">会话、完整消息、研究目标与偏好保存在本机 SQLite 中。</p><div id="session-list"></div></section>
     </main>
   </div>
   <input id="file-input" type="file" multiple hidden>

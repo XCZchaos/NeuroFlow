@@ -333,6 +333,41 @@ Content-Type: application/json
 
 Electron 会在已导入数据时附加经过验证的元数据上下文和 `dataset_id`。
 
+### 长期对话记忆
+
+NeuroFlow 使用本机 `data/neuroflow.db` 保存会话、完整消息、研究目标、用户偏好和数据集绑定。该运行时数据库已被 Git 忽略。模型每次只读取最近 12 条原始消息，并读取由更早消息形成的长期摘要，避免上下文随对话无限增长。
+
+```http
+GET    /sessions
+POST   /sessions
+DELETE /sessions/:id
+GET    /sessions/:id/messages?limit=200
+PUT    /sessions/:id/dataset
+GET    /sessions/:id/memory
+PUT    /sessions/:id/memory
+```
+
+创建会话可以由后端生成 ID：
+
+```json
+{"title":"P300 预处理研究"}
+```
+
+结构化记忆格式：
+
+```json
+{
+  "research_goal": "比较 P300 分类流程",
+  "preferences": {
+    "language": "zh-CN",
+    "save_output": "false"
+  },
+  "summary": ""
+}
+```
+
+聊天请求携带 `dataset_id` 时，后端会自动把数据集绑定到该会话。完整消息不会因摘要生成而删除，可以从会话消息接口恢复。
+
 ### 流式对话
 
 ```http

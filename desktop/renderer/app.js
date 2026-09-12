@@ -26,7 +26,9 @@ const templates = {
   ]}
 };
 const clone = value => JSON.parse(JSON.stringify(value));
-const state = { mode:'EEG', steps:[], datasets:[], current:null, history:[], running:false, sending:false, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
+const persistedSession=localStorage.getItem('neuroflow-session-id');
+const state = { mode:'EEG', steps:[], datasets:[], current:null, history:[], sessions:[], running:false, sending:false, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:persistedSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
+localStorage.setItem('neuroflow-session-id',state.session);
 let toastTimer;
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').hidden = true, 4000); }
 function element(tag, className, text) { const node = document.createElement(tag); if(className) node.className=className; if(text !== undefined) node.textContent=text; return node; }
@@ -127,8 +129,16 @@ function renderLists() {
   const history=$('#history-list');history.replaceChildren();
   if(!state.history.length) history.append(element('p','empty',t('history.empty')));
   [...state.history].reverse().forEach(run=>{const row=element('div','list-row'),details=element('div'),comparison=run.result?.quality_comparison,degraded=run.result?.audit_log?.filter(item=>item.status==='degraded').length||0;const quality=comparison?t('history.quality',{before:Number(comparison.before.score).toFixed(1),after:Number(comparison.after.score).toFixed(1),degraded}):'';details.append(element('strong','',t(run.real?'history.realComplete':'history.complete',{mode:run.mode,count:run.steps.length})),element('p','',`${run.time} · ${run.real?`${quality} · ${run.output?.file_name||t('history.processed')}`:t('history.noProcessing')}`));const button=element('button','button light',run.real&&run.output?.relative_path?t('action.locate'):t('action.export'));button.addEventListener('click',()=>run.real&&run.output?.relative_path&&globalThis.desktop?.showOutput?globalThis.desktop.showOutput(run.output.relative_path).catch(error=>toast(error.message)):download(run,`neuroflow-${run.mode}-run.json`));row.append(details,button);history.append(row);});
+	const sessions=$('#session-list');if(sessions){sessions.replaceChildren();if(!state.sessions.length)sessions.append(element('p','empty',t('session.empty')));state.sessions.forEach(item=>{const row=element('div',`list-row session-row${item.id===state.session?' current':''}`),details=element('div');details.append(element('strong','',item.title||t('session.untitled')),element('p','',`${item.dataset_id||t('session.noDataset')} · ${new Date(item.updated_at).toLocaleString()}`));const actions=element('div','session-actions'),open=element('button','button light',item.id===state.session?t('session.current'):t('session.open')),remove=element('button','button danger',t('session.delete'));open.disabled=item.id===state.session;open.addEventListener('click',()=>openSession(item.id));remove.addEventListener('click',()=>deleteSession(item.id));actions.append(open,remove);row.append(details,actions);sessions.append(row);});}
 }
-function setView(view) { for(const name of ['workspace','datasets','history'])$(`#${name}-view`).hidden=name!==view;$$('.nav-item[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));const keys={workspace:'nav.preprocessing',datasets:'nav.datasets',history:'nav.history'};$('#breadcrumb').textContent=t(keys[view]);$('#page-title').textContent=view==='workspace'?t('view.title'):t(keys[view]);renderLists();if(view==='workspace')requestAnimationFrame(drawSignal); }
+function setView(view) { for(const name of ['workspace','datasets','history','sessions'])$(`#${name}-view`).hidden=name!==view;$$('.nav-item[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));const keys={workspace:'nav.preprocessing',datasets:'nav.datasets',history:'nav.history',sessions:'nav.sessions'};$('#breadcrumb').textContent=t(keys[view]);$('#page-title').textContent=view==='workspace'?t('view.title'):t(keys[view]);renderLists();if(view==='workspace')requestAnimationFrame(drawSignal); }
+
+async function memoryRequest(path,options={}){const response=await fetch(`${state.url}${path}`,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});const data=response.status===204?null:await response.json().catch(()=>({message:`HTTP ${response.status}`}));if(!response.ok)throw new Error(data?.message||`HTTP ${response.status}`);return data;}
+async function ensureSession(){if(state.backend!=='backend')return;await memoryRequest('/sessions',{method:'POST',body:JSON.stringify({id:state.session,title:t('session.untitled')})});await loadSessions();}
+async function loadSessions(){if(state.backend!=='backend')return;const data=await memoryRequest('/sessions');state.sessions=data.sessions||[];renderLists();}
+async function createSession(){if(state.sending)return toast(t('toast.wait'));const item=await memoryRequest('/sessions',{method:'POST',body:JSON.stringify({title:t('session.untitled')})});state.session=item.id;localStorage.setItem('neuroflow-session-id',state.session);$('#messages').replaceChildren();appendMessage('assistant',t('session.started'));await loadSessions();setView('workspace');}
+async function openSession(id){if(state.sending)return toast(t('toast.wait'));const data=await memoryRequest(`/sessions/${encodeURIComponent(id)}/messages?limit=500`);state.session=id;localStorage.setItem('neuroflow-session-id',id);$('#messages').replaceChildren();(data.messages||[]).forEach(message=>appendMessage(message.role==='user'?'user':'assistant',message.content));if(!(data.messages||[]).length)appendMessage('assistant',t('session.started'));await loadSessions();setView('workspace');}
+async function deleteSession(id){if(state.sending)return toast(t('toast.wait'));if(!confirm(t('session.confirmDelete')))return;await memoryRequest(`/sessions/${encodeURIComponent(id)}`,{method:'DELETE'});if(id===state.session){state.session=globalThis.crypto?.randomUUID?.()||`session-${Date.now()}`;localStorage.setItem('neuroflow-session-id',state.session);await ensureSession();$('#messages').replaceChildren();appendMessage('assistant',t('session.started'));}await loadSessions();}
 // 把 Markdown 的行内语法转换为 DOM 节点。这里不使用 innerHTML，模型返回的
 // HTML 会被当作普通文本处理，从而避免脚本注入；只开放粗体、斜体、行内代码和链接。
 function appendInlineMarkdown(parent,text) {
@@ -334,6 +344,7 @@ async function sendMessage(text) {
     let operationResult=null;
     if(state.backend==='backend'&&chatDataset?.datasetId)operationResult=await syncLatestAgentAnalysis(chatDataset,previousAnalysisId);
     appendAgentOutcome(pending,operationResult,expectedOperation&&state.backend==='backend');
+	if(state.backend==='backend')loadSessions().catch(()=>{});
   }
 }
 function download(data,name) { const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const anchor=element('a');anchor.href=url;anchor.download=name;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000); }
@@ -449,7 +460,7 @@ function bindI18n() {
   const bindText=(selector,key)=>{const node=$(selector);if(node)node.dataset.i18n=key;};
   const bindAttr=(selector,key,attribute)=>{const node=$(selector);if(node){node.dataset.i18n=key;node.dataset.i18nAttr=attribute;}};
   [
-    ['.nav-item[data-view="workspace"]','nav.preprocessing'],['.nav-item[data-view="datasets"]','nav.datasets'],['.nav-item[data-view="history"]','nav.history'],['.settings-trigger.nav-item','nav.settings'],['.template-label','nav.templates'],
+    ['.nav-item[data-view="workspace"]','nav.preprocessing'],['.nav-item[data-view="datasets"]','nav.datasets'],['.nav-item[data-view="history"]','nav.history'],['.nav-item[data-view="sessions"]','nav.sessions'],['.settings-trigger.nav-item','nav.settings'],['.template-label','nav.templates'],
     ['.dataset-card .section-heading h2','section.dataset'],['.pipeline-card .section-heading h2','section.pipeline'],['.signal-card .section-heading h2','section.signal'],['.agent-context','view.context'],['.workspace>div','workspace.mine'],['.profile>div','profile.name']
   ].forEach(args=>wrapOwnText(...args));
   [
@@ -504,11 +515,12 @@ $('#close-settings').addEventListener('click',()=>$('#settings-dialog').close())
 async function checkBackend(){
   if(state.backend==='demo'){setConnectionState('demo',t('status.demo'));return;}
   setConnectionState('checking',t('status.checking'));
-  try{const response=await fetch(`${state.url}/ping`,{signal:AbortSignal.timeout(4000)});if(!response.ok)throw new Error(`HTTP ${response.status}`);setConnectionState('online',t('status.online'));}
+  try{const response=await fetch(`${state.url}/ping`,{signal:AbortSignal.timeout(4000)});if(!response.ok)throw new Error(`HTTP ${response.status}`);setConnectionState('online',t('status.online'));await ensureSession();await openSession(state.session);}
   catch{setConnectionState('offline',t('status.offline'));}
 }
 function setConnectionState(status,label){$('#connection-status').textContent=label;$('#backend-dot').dataset.status=status;}
-$('#settings-form').addEventListener('submit',async event=>{event.preventDefault();if(state.sending)return toast(t('toast.wait'));state.backend=$('#backend-mode').value;state.url=$('#backend-url').value;state.session=globalThis.crypto?.randomUUID?.()||`session-${Date.now()}`;localStorage.setItem('neuroflow-connection',JSON.stringify({backend:state.backend,url:state.url}));$('#agent-mode').textContent=state.backend==='demo'?t('agent.demo'):t('agent.backend');$('#settings-dialog').close();await checkBackend();toast(t('toast.saved'));});
+$('#settings-form').addEventListener('submit',async event=>{event.preventDefault();if(state.sending)return toast(t('toast.wait'));state.backend=$('#backend-mode').value;state.url=$('#backend-url').value;localStorage.setItem('neuroflow-connection',JSON.stringify({backend:state.backend,url:state.url}));$('#agent-mode').textContent=state.backend==='demo'?t('agent.demo'):t('agent.backend');$('#settings-dialog').close();await checkBackend();toast(t('toast.saved'));});
+$('#new-session').addEventListener('click',()=>createSession().catch(error=>toast(error.message)));
 
 // 深浅主题和侧栏状态保存在本机，重启 Electron 后仍保持用户选择。
 function applyAppearance(){const theme=localStorage.getItem('neuroflow-theme')||'light',collapsed=localStorage.getItem('neuroflow-sidebar')==='collapsed';document.documentElement.dataset.theme=theme;document.body.classList.toggle('sidebar-collapsed',collapsed);$('#theme-toggle').textContent=theme==='dark'?'☀':'☾';$('#sidebar-toggle').title=collapsed?t('sidebar.expand'):t('sidebar.collapse');}
