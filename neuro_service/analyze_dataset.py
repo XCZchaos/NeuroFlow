@@ -435,15 +435,21 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
         except (ValueError, RuntimeError):
             events, event_id, event_source = np.empty((0, 3), dtype=int), None, "none"
         if len(events):
+            duplicate_event_count = int(len(events) - len(np.unique(events[:, 0])))
             epochs = mne.Epochs(working, events, event_id=event_id, tmin=epoch_tmin,
                                 tmax=epoch_tmax, baseline=None, preload=True,
-                                reject_by_annotation=True, on_missing="warn", verbose=False)
+                                reject_by_annotation=True, event_repeated="merge",
+                                on_missing="warn", verbose=False)
             epoch_report.update({"performed": True, "event_source": event_source,
                                  "event_count": int(len(events)),
+                                 "duplicate_event_count": duplicate_event_count,
                                  "retained_epochs": int(len(epochs)),
                                  "tmin_seconds": epoch_tmin, "tmax_seconds": epoch_tmax,
                                  "event_id": event_id or {}})
-            record("epoching", "completed", f"created {len(epochs)} epochs from {len(events)} {event_source} events")
+            detail = f"created {len(epochs)} epochs from {len(events)} {event_source} events"
+            if duplicate_event_count:
+                detail += f"; merged {duplicate_event_count} events sharing sample indices"
+            record("epoching", "completed", detail)
         else:
             epoch_report["reason"] = "no annotations or stim-channel events were found"
             record("epoching", "skipped", epoch_report["reason"])

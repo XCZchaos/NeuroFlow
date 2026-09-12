@@ -56,7 +56,17 @@ func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 			}
 			result, err := ExecuteNeuroAnalysis(ctx, input, saveOutput)
 			if err != nil {
-				return "", err
+				// 数据缺少事件、坐标或参数不适用属于工具层可解释失败。把错误作为
+				// 结构化观察结果交还 ReAct Agent，使模型可以说明原因并调整参数，
+				// 而不是让 Eino ToolsNode 终止整个 SSE 对话流。
+				failure, _ := json.Marshal(map[string]any{
+					"ok":         false,
+					"code":       "NEURO_ANALYSIS_FAILED",
+					"message":    err.Error(),
+					"dataset_id": input.DatasetID,
+					"retryable":  true,
+				})
+				return string(failure), nil
 			}
 			// 波形预览只发给本地 Electron，避免扩大模型上下文。
 			delete(result, "preview")

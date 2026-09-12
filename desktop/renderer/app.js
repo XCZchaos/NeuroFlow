@@ -106,6 +106,20 @@ async function registerPath(path) {
   if(!response.ok)throw new Error(data.message||data.code||`HTTP ${response.status}`);
   return data;
 }
+async function ensureDatasetRegistration(item) {
+  if(!item?.path)return item;
+  // 后端注册表当前保存在内存中，Go 进程重启后旧 dataset_id 会失效。发送消息前
+  // 先做一次轻量检查；仅在 404 时用用户原先选择的本地路径重新注册。
+  if(item.datasetId){
+    const check=await fetch(`${state.url}/datasets/${encodeURIComponent(item.datasetId)}`,{signal:AbortSignal.timeout(5000)}).catch(()=>null);
+    if(check?.ok)return item;
+    if(check&&check.status!==404)throw new Error(`HTTP ${check.status}`);
+  }
+  const record=await registerPath(item.path);
+  item.datasetId=record.dataset_id;item.inspection=record.inspection;item.analysis=null;
+  if(state.current===item){state.analysis=null;state.processed=false;}
+  return item;
+}
 async function loadRawPreview(datasetId) {
   // 注册完成后立即读取最多 10 秒真实原始波形；这是只读预览，不会启动预处理。
   const response=await fetch(`${state.url}/datasets/${encodeURIComponent(datasetId)}/preview`,{signal:AbortSignal.timeout(45000)});
@@ -334,6 +348,7 @@ async function sendMessage(text) {
       answer=demoReply(text);updateAssistantMessage(pending,answer);
     }
     else {
+      await ensureDatasetRegistration(chatDataset);
       const meta=state.current?.inspection;
       // 明确标注证据边界：元数据可以回答通道数和采样率，但不能证明数据质量良好。
       const evidence=meta?`已由 ${meta.reader} 读取：格式=${meta.format}，模态=${meta.modality}，通道数=${meta.channel_count}，采样率=${meta.sampling_rate_hz} Hz，时长=${meta.duration_seconds.toFixed(3)} 秒，样本数=${meta.sample_count}，通道类型=${JSON.stringify(meta.channel_type_counts)}，标注数=${meta.annotation_count}，已标记坏道=${JSON.stringify(meta.bad_channels)}。dataset_id=${state.current.datasetId}。这些是文件元数据，尚未执行信号质量分析或预处理。`:`当前只有用户选择的模态 ${state.mode}，没有已解析的数据文件。`;
@@ -366,7 +381,9 @@ async function sendMessage(text) {
     // dataset_id 查询一次最新结果，只有 analysis_id 变化才刷新画布。
     let operationResult=null;
     if(state.backend==='backend'&&chatDataset?.datasetId)operationResult=await syncLatestAgentAnalysis(chatDataset,previousAnalysisId);
-    appendAgentOutcome(pending,operationResult,expectedOperation&&state.backend==='backend');
+	// 成功产生分析结果时展示独立结果卡。失败原因已经由 Agent 或连接错误正文说明，
+	// 不再追加第二张“未检测到结果”卡，避免用户看到两个含义不清的错误提示。
+	if(operationResult)appendAgentOutcome(pending,operationResult,true);
 	if(state.backend==='backend')loadSessions().catch(()=>{});
   }
 }

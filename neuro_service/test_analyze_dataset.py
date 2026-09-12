@@ -21,7 +21,11 @@ class EEGPipelineTest(unittest.TestCase):
         data[0, int(2.95 * sfreq):int(3.05 * sfreq)] += 500e-6
         info = mne.create_info(["F3", "F4", "C3", "C4"], sfreq, "eeg")
         raw = mne.io.RawArray(data, info, verbose=False)
-        raw.set_annotations(mne.Annotations([1.0, 3.0, 5.0], [0, 0, 0], ["stim", "stim", "stim"]))
+        # 3 秒处两个不同标记会映射到同一采样点，覆盖真实数据中常见的重复事件情况。
+        raw.set_annotations(mne.Annotations(
+            [1.0, 3.0, 3.0, 5.0], [0, 0, 0, 0],
+            ["stim", "stim", "response", "stim"],
+        ))
 
         result, _, processed, processed_info, processed_sfreq, epochs = eeg_auto_analysis(
             raw, 0, raw.n_times, sfreq, "full", None, None,
@@ -35,7 +39,8 @@ class EEGPipelineTest(unittest.TestCase):
         self.assertIsNotNone(epochs)
         report = result["preprocessing"]["epochs"]
         self.assertTrue(report["performed"])
-        self.assertEqual(report["event_count"], 3)
+        self.assertEqual(report["event_count"], 4)
+        self.assertEqual(report["duplicate_event_count"], 1)
         self.assertGreaterEqual(report["rejected_epochs"], 1)
         self.assertEqual(report["baseline_seconds"], [-0.2, 0.0])
         baseline_samples = (epochs.times >= -0.2) & (epochs.times <= 0.0)
