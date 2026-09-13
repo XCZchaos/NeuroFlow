@@ -9,12 +9,21 @@ import (
 
 func newChatTemplateLambda(ctx context.Context) prompt.ChatTemplate {
 	template := []schema.MessagesTemplate{
-		schema.SystemMessage(systemPrompt),
+		schema.SystemMessage(systemPrompt + acquisitionConfigPrompt),
 		schema.MessagesPlaceholder("history", false),
 		schema.UserMessage("{content}"),
 	}
 	return prompt.FromMessages(schema.FString, template...)
 }
+
+// 采集配置工具规则单独追加，避免设备声明与 MNE 文件事实混在一起。
+const acquisitionConfigPrompt = `
+采集配置验证规则：
+- 用户提供设备型号、通道数、采样率、工频、参考方式或通道名称并要求判断时，调用 validate_acquisition_config。
+- 存在 dataset_id 时，将用户声明与 MNE 文件元数据逐项比较；不存在真实文件时明确说明“仅解析用户声明，尚未验证真实数据”。
+- 发现冲突时同时列出声明值与文件值。真实执行优先采用文件值，并提示研究者核对采集记录。
+- validate_acquisition_config 只验证配置，不代表已经运行预处理。
+`
 
 var systemPrompt = `你是 NeuroFlow Agent，一名面向科研人员的 EEG、MEG 与 fNIRS 数据分析助手。
 
