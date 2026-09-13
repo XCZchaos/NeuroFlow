@@ -21,6 +21,7 @@ main{max-width:1580px;padding:38px}.page-heading{margin-bottom:32px}.eyebrow{col
 
 /* 数据集信息使用独立指标块，方便快速核对通道、采样率和时长。 */
 .dataset-card,.pipeline-card,.signal-card{padding-left:24px;padding-right:24px;padding-top:23px}.dataset-body{margin-top:23px;padding:14px;border-radius:12px;background:linear-gradient(90deg,#f5faf7,#fbfdfc)}.file-icon{width:44px;height:48px;border:0;border-radius:11px;background:#dff2ea;color:var(--nf-primary)}.file-details strong{color:#29473f;font-size:13px}
+.dataset-card.is-empty .dataset-body{border:1px dashed #cfe3da;background:linear-gradient(135deg,#f8fcfa,#f2f8f5);padding:22px 18px}.dataset-card.is-empty .file-icon{display:grid;place-items:center;border:1px solid #c9e4d8;background:#fff;font-size:22px}.dataset-card.is-empty .file-details p{max-width:520px}.dataset-card.is-empty #change-file{border-color:#9fcfbd;color:#14785f;background:#fff}.dataset-card.is-pending .dataset-body{border:1px solid #e7d9b4;background:#fffbf1}.dataset-card.is-pending .file-icon{background:#f8eccd;color:#9a7420}.dataset-card.is-ready .dataset-body{border:1px solid #dbeee6}.dataset-card.is-ready #source-badge{background:#e8f7ef;color:#238467;border-color:#d5eee3}
 .metadata{gap:9px;margin:20px 0}.metadata>div,.metadata>div:first-child{border:0;padding:12px 13px;border-radius:10px;background:#f7faf9}.metadata span{margin-bottom:7px}.metadata strong{color:#244a3f;font-size:17px}.drop-hint{color:#8a9b95;padding:14px 0}
 
 /* 流程步骤在鼠标经过时突出，提醒用户这里可以编辑。 */

@@ -63,20 +63,26 @@ function setMode(mode) {
 function renderDataset() {
   const template=templates[state.mode], file=state.current;
 	const meta=file?.inspection;
-  $('#file-name').textContent=file ? file.name : template.name;
   const english=i18n.getLocale()==='en';
-  $('#file-description').textContent=meta ? `${formatBytes(file.size)} · ${english?'Metadata read by':'已由'} ${meta.reader}` : file ? `${formatBytes(file.size)} · ${english?'Selected, pending inspection':'已选择本地文件，尚未解析信号'}` : english?'Resting state · Synthetic preview':'静息态 · 示例信号，用于预览界面';
-  $('#source-badge').textContent=meta?t('badge.parsed'):file?t('badge.pending'):t('badge.example');
-  $('#meta-channels').textContent=meta?`${meta.channel_count} channels`:file?t('badge.pending'):`${template.channels} channels`;
-  $('#meta-rate').textContent=meta?`${meta.sampling_rate_hz} Hz`:file?t('badge.pending'):`${template.rate} Hz`;
-  $('#meta-duration').textContent=meta?`${meta.duration_seconds.toFixed(1)} s`:file?t('badge.pending'):'05:00 min';
-  $('#meta-format').textContent=meta?meta.format:file?file.name.split('.').pop().toUpperCase():template.format;
-  $('#format-hint').textContent=`${english?'Supports':'支持'} ${template.accept.split(',').join(' / ')} · ${english?'Keep companion files together':'可拖入配套文件'}`;
+  const card=$('#dropzone'),metadata=$('.dataset-card .metadata'),badge=$('#source-badge'),icon=$('.dataset-card .file-icon');
+  card.classList.toggle('is-empty',!file);card.classList.toggle('is-pending',Boolean(file&&!meta));card.classList.toggle('is-ready',Boolean(meta));
+  badge.classList.toggle('neutral',!meta);metadata.hidden=!meta;
+  $('#file-name').textContent=file?.name||t('dataset.noneTitle');
+  $('#file-description').textContent=meta?`${formatBytes(file.size)} · ${english?'Metadata read by':'元数据读取器'} ${meta.reader}`:file?`${formatBytes(file.size)} · ${t('dataset.pendingDescription')}`:t('dataset.noneDescription');
+  badge.textContent=meta?t('badge.parsed'):file?t('badge.pending'):t('badge.empty');
+  icon.textContent=meta?'∿':file?'…':'＋';
+  $('#change-file').textContent=t(file?'dataset.replace':'dataset.import');
+  $('#meta-channels').textContent=meta?`${meta.channel_count} channels`:'—';
+  $('#meta-rate').textContent=meta?`${meta.sampling_rate_hz} Hz`:'—';
+  $('#meta-duration').textContent=meta?`${meta.duration_seconds.toFixed(1)} s`:'—';
+  $('#meta-format').textContent=meta?meta.format:'—';
+  const formats=template.accept.split(',').join(' / ');
+  $('#format-hint').textContent=file?t('dataset.supported',{formats}):t('dataset.drop');
   $('#file-input').accept=template.accept;
   const shownPreview=state.processed?state.analysis?.preview?.processed:(state.analysis?.preview?.raw||file?.preview);
   $('#signal-unit').textContent=t('signal.amplitude',{unit:shownPreview?.unit||template.unit});
   const processedTab=$('[data-signal="processed"]');if(processedTab)processedTab.disabled=!state.analysis?.preview?.processed;
-  $('#dataset-count').textContent=state.datasets.length||1;
+  $('#dataset-count').textContent=state.datasets.length;
 }
 function renderPipeline() {
   const list=$('#pipeline'); list.replaceChildren();
