@@ -125,7 +125,9 @@ func (k *knowledgeIndex) textToQdrantIndex() func(ctx context.Context, req []*sc
 func parseKnowledgeMetadata(lines []string) map[string]any {
 	allowed := map[string]bool{
 		"modality": true, "paradigm": true, "stage": true, "software": true,
-		"knowledge_type": true, "review_status": true,
+		"knowledge_type": true, "review_status": true, "source_version": true,
+		"reviewed_at": true, "applies_when": true, "contraindications": true,
+		"device": true, "dataset": true,
 	}
 	result := make(map[string]any)
 	for _, line := range lines {

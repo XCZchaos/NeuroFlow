@@ -304,6 +304,28 @@ GET /datasets/{dataset_id}
 
 Electron 在注册成功后会调用 `GET /datasets/{dataset_id}/preview`，只读加载文件开头最多 10 秒、8 个通道，并抽稀到每通道最多约 1200 点。因此刚导入文件时“原始”标签显示的已经是真实数据；完成预处理后，“处理后”标签显示 Python/MNE 返回的真实处理结果。
 
+### 批量与多被试分析
+
+数据管理页可以勾选同一模态的多个已确认数据集，创建持久化批次。批次逐项调用真实 MNE 分析工具，记录每个数据集的状态、错误、输出和处理前后质量评分；单项失败不会停止其余数据。任务保存在 SQLite 中，后端异常退出后会标记为 `interrupted`，可在界面恢复并重试失败项。
+
+```http
+POST   /batches
+GET    /batches
+GET    /batches/{id}
+POST   /batches/{id}/pause
+POST   /batches/{id}/resume
+DELETE /batches/{id}
+```
+
+### RAG 证据核验
+
+`docs/knowledge/SCHEMA.md` 定义原子知识 ID、官方来源、来源版本、复核日期、适用条件和禁忌条件。Agent 的 `audit_knowledge_evidence` 工具会逐条验证回答引用的知识 ID，避免引用不存在或没有来源的条目。
+
+```http
+GET  /knowledge/catalog
+POST /knowledge/audit
+```
+
 聊天 Agent 调用 `run_neuro_analysis` 后，后端会按数据集保存最近一次内存结果。Electron 在流式回答结束时调用 `GET /datasets/{dataset_id}/analysis/latest`；检测到新的 `analysis_id` 后会自动切换到“处理后”并绘制真实波形。波形只在本机后端与 Electron 之间传递，不进入大模型上下文。
 
 分析器还会将每个真实步骤作为 SSE 推送到 `GET /datasets/{dataset_id}/analysis/events`。Electron 的“任务与执行进度”面板显示开始、候选参数、完成、降级、失败和重试次数；断线重连可依据事件序号读取最近的缓冲事件。
@@ -752,6 +774,13 @@ go test ./...
 python neuro_service/test_structured_data.py
 python neuro_service/test_import_review.py
 python -m compileall -q neuro_service
+python tests/real_data/test_runner.py
+```
+
+真实公开数据回归配置位于 `tests/real_data/`。日常运行允许缺失的大型数据被跳过；发布前使用 `--require-all`，对 EEGBCI、BCI Competition IV 2a、MNE ERP/MEG/空房、SNIRF 和 OpenNeuro BIDS 逐项验证通道数、采样率、事件、滤波、Epoch、质量评分及 JSON/HTML 报告产物：
+
+```powershell
+python tests/real_data/run_regression.py --data-root D:\NeuroFlowTestData --require-all
 ```
 
 ```powershell

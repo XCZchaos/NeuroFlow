@@ -2,6 +2,7 @@ package chatServer
 
 import (
 	"OnCallAgent/internal/server/taskstate"
+	"OnCallAgent/internal/server/batchstate"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -39,6 +40,7 @@ func NewSQLiteMemoryStore(path string) (*SQLiteMemoryStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err = (&batchstate.Store{DB: db}).Init(context.Background()); err != nil { db.Close(); return nil, err }
 	return store, nil
 }
 
@@ -372,3 +374,4 @@ func emptyAsUnknown(value string) string {
 
 // TaskStore shares session lifecycle and durable SQLite storage.
 func (s *SQLiteMemoryStore) TaskStore() *taskstate.Store { return &taskstate.Store{DB: s.db} }
+func (s *SQLiteMemoryStore) BatchStore() *batchstate.Store { return &batchstate.Store{DB: s.db} }

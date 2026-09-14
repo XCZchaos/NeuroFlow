@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "datasets": [
+    {
+      "id": "physionet-eegbci",
+      "modality": "EEG",
+      "root_env": "NEUROFLOW_EEGBCI_ROOT",
+      "patterns": ["**/S001R06.edf"],
+      "profile": "full",
+      "max_seconds": 30,
+      "expect": {"channels_min": 60, "channels_max": 66, "sampling_rate_min": 159, "sampling_rate_max": 161, "annotations_min": 1, "epochs_min": 1, "filter": true, "quality": true, "reports": true}
+    },
+    {
+      "id": "bci-competition-iv-2a",
+      "modality": "EEG",
+      "root_env": "NEUROFLOW_BCI_IV_2A_ROOT",
+      "patterns": ["**/A01T.gdf"],
+      "profile": "full",
+      "max_seconds": 30,
+      "expect": {"channels_min": 25, "channels_max": 25, "sampling_rate_min": 249, "sampling_rate_max": 251, "annotations_min": 1, "epochs_min": 1, "filter": true, "quality": true, "reports": true}
+    },
+    {
+      "id": "mne-sample-erp",
+      "modality": "EEG",
+      "root_env": "NEUROFLOW_MNE_SAMPLE_ROOT",
+      "patterns": ["**/sample_audvis_raw.fif"],
+      "profile": "full",
+      "max_seconds": 30,
+      "expect": {"channels_min": 50, "sampling_rate_min": 100, "filter": true, "quality": true, "reports": true}
+    },
+    {
+      "id": "mne-sample-meg",
+      "modality": "MEG",
+      "root_env": "NEUROFLOW_MNE_SAMPLE_ROOT",
+      "patterns": ["**/sample_audvis_raw.fif"],
+      "profile": "quality",
+      "max_seconds": 20,
+      "expect": {"channels_min": 200, "sampling_rate_min": 100, "quality": true, "reports": true}
+    },
+    {
+      "id": "mne-empty-room",
+      "modality": "MEG",
+      "root_env": "NEUROFLOW_MNE_SAMPLE_ROOT",
+      "patterns": ["**/ernoise_raw.fif"],
+      "profile": "quality",
+      "max_seconds": 20,
+      "expect": {"channels_min": 200, "sampling_rate_min": 100, "quality": true, "reports": true}
+    },
+    {
+      "id": "mne-fnirs-snirf",
+      "modality": "fNIRS",
+      "root_env": "NEUROFLOW_FNIRS_ROOT",
+      "patterns": ["**/*.snirf"],
+      "profile": "full",
+      "max_seconds": 60,
+      "expect": {"channels_min": 2, "sampling_rate_min": 1, "reports": true}
+    },
+    {
+      "id": "openneuro-bids",
+      "modality": "EEG",
+      "root_env": "NEUROFLOW_OPENNEURO_ROOT",
+      "patterns": ["**/*_eeg.edf", "**/*_eeg.vhdr", "**/*_eeg.set"],
+      "profile": "full",
+      "max_seconds": 30,
+      "expect": {"channels_min": 1, "sampling_rate_min": 1, "bids": true, "filter": true, "quality": true, "reports": true}
+    }
+  ]
+}

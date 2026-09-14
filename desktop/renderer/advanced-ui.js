@@ -2,6 +2,7 @@
 let advancedProgressSource=null, advancedProgressDataset='', advancedTaskRevision=-1;
 let advancedCurrentTask=null;
 let advancedRenderedAnalysis='';
+let advancedBatchSignature='';
 const advancedLiveSteps=new Map();
 const advancedStepEN={erp:'ERP analysis',time_frequency:'Time-frequency analysis',decoding:'Cross-validated decoding',report:'Reproducible report',maxwell_filter:'Maxwell filter',environmental_noise:'Empty-room noise reduction',analysis:'Analysis'};
 
@@ -20,6 +21,25 @@ function ensureAdvancedPanels(){
     button.addEventListener('click',browseBIDSRoot);heading.append(button);
     const browser=document.createElement('div');browser.id='bids-browser';browser.hidden=true;heading.after(browser);
   }
+  if(datasets&&!document.querySelector('#batch-panel')){
+    const panel=document.createElement('section');panel.id='batch-panel';panel.className='batch-panel';panel.innerHTML='<div class="section-heading"><h2>批量分析</h2><span class="pill neutral">SQLite 队列</span></div><p class="task-empty">选择同一模态的多个数据集，使用当前流程依次处理。单个失败不会中止整个批次。</p><div id="batch-datasets"></div><div class="batch-actions"><input id="batch-name" maxlength="80" placeholder="批次名称"><label><input id="batch-save" type="checkbox" checked> 保存结果</label><button id="create-batch" class="button primary">开始批处理</button></div><div id="batch-jobs"></div>';
+    datasets.append(panel);panel.querySelector('#create-batch').addEventListener('click',createAdvancedBatch);
+  }
+}
+
+function renderBatchDatasets(){
+  ensureAdvancedPanels();const target=$('#batch-datasets');if(!target)return;const items=state.datasets.filter(item=>item.datasetId&&item.mode===state.mode),signature=items.map(item=>`${item.datasetId}:${item.name}`).join('|');if(signature===advancedBatchSignature)return;advancedBatchSignature=signature;target.replaceChildren();
+  if(!items.length){target.append(element('p','task-empty',i18n.getLocale()==='en'?'Import at least one parsed dataset in the current modality.':'请先导入当前模态的已解析数据集。'));return;}
+  for(const item of items){const label=element('label','batch-dataset');const input=document.createElement('input');input.type='checkbox';input.value=item.datasetId;label.append(input,element('span','',item.name),element('small','',`${item.inspection?.channel_count||0} ch · ${item.inspection?.sampling_rate_hz||0} Hz`));target.append(label);}
+}
+async function createAdvancedBatch(){
+  if(state.backend!=='backend')return toast(t('toast.connectBackend'));const ids=[...document.querySelectorAll('#batch-datasets input:checked')].map(input=>input.value);if(!ids.length)return toast(i18n.getLocale()==='en'?'Select at least one dataset':'请至少选择一个数据集');
+  const enabled=state.steps.filter(step=>step.enabled).map(step=>step.key),body={name:$('#batch-name').value||`${state.mode} batch`,dataset_ids:ids,save_output:$('#batch-save').checked,parameters:{analysis_type:'full',enabled_steps:enabled}};
+  const response=await fetch(`${state.url}/batches`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),data=await response.json();if(!response.ok)return toast(data.message||'Batch creation failed');toast(i18n.getLocale()==='en'?'Batch queued':'批次已进入队列');await loadAdvancedBatches();
+}
+async function batchAction(id,action,retry=false){const response=await fetch(`${state.url}/batches/${encodeURIComponent(id)}/${action}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retry_failed:retry})});if(!response.ok){const data=await response.json();toast(data.message||'Batch action failed')}await loadAdvancedBatches();}
+async function loadAdvancedBatches(){
+  renderBatchDatasets();if(state.backend!=='backend')return;try{const response=await fetch(`${state.url}/batches`,{signal:AbortSignal.timeout(5000)});if(!response.ok)return;const data=await response.json(),target=$('#batch-jobs');target.replaceChildren();for(const job of data.batches||[]){const card=element('article','batch-job'),head=element('div','batch-job-head');head.append(element('strong','',job.name||job.id),element('span',`pill ${job.status==='completed'?'':'neutral'}`,job.status));card.append(head,element('p','',`${job.summary?.completed||0}/${job.summary?.total||0} completed · ${job.summary?.failed||0} failed`));const items=element('div','batch-items');for(const item of job.items||[]){const row=element('div',`audit-step ${item.status}`);row.append(element('strong','',item.name||item.dataset_id),element('span','',item.error||item.status));items.append(row)}card.append(items);const actions=element('div','batch-job-actions');if(['running','queued'].includes(job.status)){const pause=element('button','button light',i18n.getLocale()==='en'?'Pause':'暂停');pause.onclick=()=>batchAction(job.id,'pause');actions.append(pause)}if(['paused','interrupted','completed_with_errors'].includes(job.status)){const resume=element('button','button light',i18n.getLocale()==='en'?'Resume / retry':'恢复 / 重试');resume.onclick=()=>batchAction(job.id,'resume',true);actions.append(resume)}card.append(actions);target.append(card)}}catch{}
 }
 
 function renderAnalysisProducts(){
@@ -81,6 +101,6 @@ async function browseBIDSRoot(){
   for(const recording of data.recordings){const row=element('div','bids-recording'),info=element('div');info.append(element('strong','',recording.relative_path),element('small','',`sub-${recording.subject||'?'} · ${recording.datatype} · task-${recording.task||'n/a'}`));const open=element('button','button light',i18n.getLocale()==='en'?'Import':'导入');open.addEventListener('click',()=>importPaths([recording.path]));row.append(info,open);panel.append(row);}
 }
 
-ensureAdvancedPanels();renderAdvancedProgress();connectAdvancedProgress();loadAdvancedTask();
-setInterval(()=>{connectAdvancedProgress();loadAdvancedTask();renderAdvancedProgress();renderAnalysisProducts();},1500);
+ensureAdvancedPanels();renderAdvancedProgress();connectAdvancedProgress();loadAdvancedTask();loadAdvancedBatches();
+setInterval(()=>{connectAdvancedProgress();loadAdvancedTask();renderAdvancedProgress();renderAnalysisProducts();loadAdvancedBatches();},1500);
 document.addEventListener('neuroflow:localechange',()=>{advancedProgressDataset='';connectAdvancedProgress();loadAdvancedTask();});

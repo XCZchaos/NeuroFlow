@@ -43,11 +43,13 @@ func (u chatServer) newReactAgentLambda(ctx context.Context) (node *compose.Lamb
 	if err != nil {
 		return nil, err
 	}
+	evidenceAuditTool, err := tools.KnowledgeEvidenceAuditTool()
+	if err != nil { return nil, err }
 	// 初始化所需的 tools
 	toolConfig := compose.ToolsNodeConfig{
 		// retrieve 用于查知识库；inspectDataset 读取已验证的文件事实；
 		// neuroPlan 根据这些事实生成草案。三者职责保持独立，便于以后增加执行工具。
-		Tools: []tool.BaseTool{retrieveTool, inspectDatasetTool, acquisitionConfigTool, neuroPlanTool, pythonAnalysisTool, taskTool},
+		Tools: []tool.BaseTool{retrieveTool, inspectDatasetTool, acquisitionConfigTool, neuroPlanTool, pythonAnalysisTool, taskTool, evidenceAuditTool},
 	}
 
 	// 创建 agent

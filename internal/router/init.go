@@ -4,6 +4,8 @@ import (
 	"OnCallAgent/internal/handler"
 	"OnCallAgent/internal/server/ai/agent/chat"
 	"OnCallAgent/internal/server/chatServer"
+	"OnCallAgent/internal/server/batch"
+	"OnCallAgent/internal/server/batchstate"
 	knowledgeindex "OnCallAgent/internal/server/knowledge_index"
 	"OnCallAgent/internal/server/plan"
 	"OnCallAgent/pkg/config"
@@ -50,6 +52,8 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	r.GET("/sessions/:id/memory", chaterHandler.GetSessionMemory())
 	r.PUT("/sessions/:id/memory", chaterHandler.UpdateSessionMemory())
 	r.POST("/agent/preprocessing/draft", handler.NeuroPreprocessingDraft())
+	r.GET("/knowledge/catalog", handler.KnowledgeCatalog())
+	r.POST("/knowledge/audit", handler.AuditKnowledgeEvidence())
 	// 数据集接口与普通知识库上传分开：这里读取的是神经信号元数据，
 	// 不会把二进制波形当作文档切片写入向量数据库。
 	r.POST("/datasets/register", handler.RegisterDataset())
@@ -62,6 +66,10 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	r.GET("/datasets/:id/analysis/events", handler.AnalysisEvents())
 	r.GET("/datasets/:id/derivatives", handler.DatasetDerivatives())
 	r.POST("/datasets/:id/analyze", handler.AnalyzeDataset())
+	if provider, ok := memory.(interface{ BatchStore() *batchstate.Store }); ok {
+		batches := batch.New(provider.BatchStore())
+		r.POST("/batches", handler.CreateBatch(batches)); r.GET("/batches", handler.ListBatches(batches)); r.GET("/batches/:id", handler.GetBatch(batches)); r.POST("/batches/:id/pause", handler.PauseBatch(batches)); r.POST("/batches/:id/resume", handler.ResumeBatch(batches)); r.DELETE("/batches/:id", handler.DeleteBatch(batches))
+	}
 	//运维
 	planer := plan.NewPlanServer(*config, model, loger, retriever)
 	planerH := handler.NewPlanHandler(planer)
