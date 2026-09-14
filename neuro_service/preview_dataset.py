@@ -8,6 +8,9 @@ from pathlib import Path
 
 import mne
 import numpy as np
+from structured_data import STRUCTURED_EXTENSIONS, load_structured_raw
+from bids_support import is_bids_path, load_bids_raw
+from import_review import apply_config
 
 READERS = {
     ".edf": "read_raw_edf", ".bdf": "read_raw_bdf", ".gdf": "read_raw_gdf",
@@ -23,14 +26,16 @@ def main() -> int:
     try:
         path = Path(sys.argv[1]).resolve()
         modality = sys.argv[2]
-        duration = min(120.0, max(0.5, float(sys.argv[3]) if len(sys.argv) > 3 else 10.0))
+        duration = min(120.0, max(0.001, float(sys.argv[3]) if len(sys.argv) > 3 else 10.0))
         start_seconds = max(0.0, float(sys.argv[4]) if len(sys.argv) > 4 else 0.0)
         requested_channel = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
         suffix = ".ds" if path.is_dir() and path.name.lower().endswith(".ds") else path.suffix.lower()
         reader = READERS.get(suffix)
-        if not reader:
+        bids = is_bids_path(path)
+        if not reader and suffix not in STRUCTURED_EXTENSIONS and not bids:
             raise ValueError(f"unsupported file format: {suffix}")
-        raw = getattr(mne.io, reader)(str(path), preload=False, verbose="ERROR")
+        raw = load_bids_raw(path)[0] if bids else (load_structured_raw(path)[0] if suffix in STRUCTURED_EXTENSIONS else getattr(mne.io, reader)(str(path), preload=False, verbose="ERROR"))
+        raw = apply_config(raw, path)
         if modality == "EEG":
             picks = mne.pick_types(raw.info, eeg=True, meg=False, fnirs=False, exclude=[])
             scale, unit = 1e6, "µV"
@@ -52,6 +57,7 @@ def main() -> int:
         else:
             picks = picks[:8]
         sfreq = float(raw.info["sfreq"])
+        duration = min(120.0, max(duration, 2 / sfreq))
         start = min(max(0, int(round(start_seconds * sfreq))), max(0, raw.n_times - 1))
         stop = min(raw.n_times, start + max(1, int(round(duration * sfreq))))
         data = raw.get_data(picks=picks, start=start, stop=stop) * scale

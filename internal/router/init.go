@@ -44,6 +44,7 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	r.GET("/sessions", chaterHandler.ListSessions())
 	r.POST("/sessions", chaterHandler.CreateSession())
 	r.DELETE("/sessions/:id", chaterHandler.DeleteSession())
+	r.GET("/sessions/:id/task", chaterHandler.SessionTask())
 	r.GET("/sessions/:id/messages", chaterHandler.SessionMessages())
 	r.PUT("/sessions/:id/dataset", chaterHandler.BindDataset())
 	r.GET("/sessions/:id/memory", chaterHandler.GetSessionMemory())
@@ -53,6 +54,7 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	// 不会把二进制波形当作文档切片写入向量数据库。
 	r.POST("/datasets/register", handler.RegisterDataset())
 	r.GET("/datasets/:id", handler.GetDataset())
+	r.PUT("/datasets/:id/structure", handler.ConfirmDatasetStructure())
 	r.GET("/datasets/:id/preview", handler.PreviewDataset())
 	r.GET("/datasets/:id/signal", handler.SignalWindow())
 	r.GET("/datasets/:id/analysis/latest", handler.LatestDatasetAnalysis())

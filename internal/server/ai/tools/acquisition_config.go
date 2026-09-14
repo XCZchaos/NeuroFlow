@@ -43,6 +43,45 @@ type AcquisitionValidation struct {
 	Warnings        []string               `json:"warnings"`
 	Recommendations []string               `json:"recommendations"`
 	CanExecute      bool                   `json:"can_execute_preprocessing"`
+	DeviceProfile   *DeviceProfile         `json:"device_profile,omitempty"`
+}
+
+// DeviceProfile 是保守的设备知识映射。只有厂家固定规格才填写精确值；可配置设备保留为 0，避免误导 Agent。
+type DeviceProfile struct {
+	CanonicalName        string   `json:"canonical_name"`
+	Aliases              []string `json:"aliases"`
+	Modality             string   `json:"modality"`
+	ChannelCount         int      `json:"channel_count,omitempty"`
+	SamplingRateHz       float64  `json:"sampling_rate_hz,omitempty"`
+	ChannelNames         []string `json:"channel_names,omitempty"`
+	NativeUnit           string   `json:"native_unit"`
+	DefaultReference     string   `json:"default_reference"`
+	Montage              string   `json:"montage"`
+	RequiresConfirmation bool     `json:"requires_confirmation"`
+}
+
+var deviceProfiles = []DeviceProfile{
+	{CanonicalName: "OpenBCI Cyton", Aliases: []string{"cyton", "openbci cyton"}, Modality: "EEG", ChannelCount: 8, SamplingRateHz: 250, NativeUnit: "uV", DefaultReference: "device configuration dependent", Montage: "match supplied electrode names to standard_1020", RequiresConfirmation: true},
+	{CanonicalName: "OpenBCI Ganglion", Aliases: []string{"ganglion", "openbci ganglion"}, Modality: "EEG", ChannelCount: 4, SamplingRateHz: 200, NativeUnit: "uV", DefaultReference: "device configuration dependent", Montage: "match supplied electrode names to standard_1020", RequiresConfirmation: true},
+	{CanonicalName: "Muse 2", Aliases: []string{"muse", "muse 2", "muse2"}, Modality: "EEG", ChannelCount: 4, SamplingRateHz: 256, ChannelNames: []string{"TP9", "AF7", "AF8", "TP10"}, NativeUnit: "uV", DefaultReference: "device reference; verify auxiliary/reference electrode metadata", Montage: "standard_1020", RequiresConfirmation: true},
+	{CanonicalName: "Brain Products actiCHamp", Aliases: []string{"actichamp", "brain products actichamp"}, Modality: "EEG", NativeUnit: "uV", DefaultReference: "recording configuration dependent", Montage: "use cap/channel coordinate file", RequiresConfirmation: true},
+	{CanonicalName: "g.tec g.Nautilus", Aliases: []string{"g.nautilus", "gnautilus", "gtec g.nautilus"}, Modality: "EEG", NativeUnit: "uV", DefaultReference: "recording configuration dependent", Montage: "use cap/channel coordinate file", RequiresConfirmation: true},
+}
+
+func findDeviceProfile(name string) *DeviceProfile {
+	needle := strings.ToLower(strings.TrimSpace(name))
+	if needle == "" {
+		return nil
+	}
+	for _, profile := range deviceProfiles {
+		for _, alias := range append(profile.Aliases, profile.CanonicalName) {
+			if strings.Contains(needle, strings.ToLower(alias)) {
+				copyOfProfile := profile
+				return &copyOfProfile
+			}
+		}
+	}
+	return nil
 }
 
 // ValidateAcquisitionConfigTool 将自然语言中的采集配置变成可审计 JSON，并在有数据集时
@@ -77,6 +116,20 @@ func BuildAcquisitionValidation(input AcquisitionConfigInput, observed *dataset.
 	input.Reference = strings.TrimSpace(input.Reference)
 	input.ChannelNames = cleanChannelNames(input.ChannelNames)
 	result := AcquisitionValidation{Declared: input, Observed: observed, Evidence: "user_declaration_only"}
+	result.DeviceProfile = findDeviceProfile(input.Device)
+	if result.DeviceProfile != nil {
+		profile := result.DeviceProfile
+		result.Recommendations = append(result.Recommendations, "设备知识映射仅用于校验；参考电极、帽型和固件设置仍需从文件或用户确认")
+		if input.Modality != "" && profile.Modality != input.Modality {
+			result.Checks = append(result.Checks, AcquisitionCheck{Field: "device_modality", Status: "conflict", Declared: input.Modality, Observed: profile.Modality, Message: "声明模态与设备知识映射冲突"})
+		}
+		if profile.ChannelCount > 0 && input.ChannelCount > 0 && profile.ChannelCount != input.ChannelCount {
+			result.Checks = append(result.Checks, AcquisitionCheck{Field: "device_channel_count", Status: "conflict", Declared: input.ChannelCount, Observed: profile.ChannelCount, Message: "声明通道数与该设备的固定规格不一致"})
+		}
+		if profile.SamplingRateHz > 0 && input.SamplingRateHz > 0 && math.Abs(profile.SamplingRateHz-input.SamplingRateHz) > .01 {
+			result.Checks = append(result.Checks, AcquisitionCheck{Field: "device_sampling_rate_hz", Status: "conflict", Declared: input.SamplingRateHz, Observed: profile.SamplingRateHz, Message: "声明采样率与设备知识映射不一致，请确认设备模式或固件设置"})
+		}
+	}
 
 	if input.Modality == "" {
 		result.Checks = append(result.Checks, AcquisitionCheck{Field: "modality", Status: "invalid", Message: "模态必须是 EEG、MEG 或 fNIRS"})

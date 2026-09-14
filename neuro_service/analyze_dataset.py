@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import platform
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import mne
@@ -16,6 +19,9 @@ import numpy as np
 from scipy.stats import kurtosis
 from mne.filter import filter_data, notch_filter
 from mne.time_frequency import psd_array_welch
+from structured_data import STRUCTURED_EXTENSIONS, load_structured_raw
+from bids_support import is_bids_path, load_bids_raw
+from import_review import apply_config, get_config
 
 
 READERS = {
@@ -28,6 +34,19 @@ READERS = {
 
 BANDS = {"delta": (1.0, 4.0), "theta": (4.0, 8.0), "alpha": (8.0, 13.0),
          "beta": (13.0, 30.0), "gamma": (30.0, 45.0)}
+
+
+def source_hash(path: Path) -> str:
+    """Hash file bytes, or a deterministic BIDS manifest when input is a directory."""
+    digest = hashlib.sha256()
+    files = [path] if path.is_file() else sorted(item for item in path.rglob("*") if item.is_file())
+    for item in files:
+        if path.is_dir():
+            digest.update(str(item.relative_to(path)).replace("\\", "/").encode())
+        with item.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+    return digest.hexdigest()
 
 
 def finite(value):
@@ -46,8 +65,12 @@ def json_default(value):
 
 
 def load_raw(path: Path):
+    if is_bids_path(path):
+        return load_bids_raw(path)[0]
     suffix = ".ds" if path.is_dir() and path.name.lower().endswith(".ds") else path.suffix.lower()
     reader_name = READERS.get(suffix)
+    if suffix in STRUCTURED_EXTENSIONS:
+        return load_structured_raw(path)[0]
     if not reader_name:
         raise ValueError(f"unsupported file format: {suffix or 'no extension'}")
     return getattr(mne.io, reader_name)(str(path), preload=False, verbose="ERROR")
@@ -614,7 +637,7 @@ def main() -> int:
     parser.add_argument("--output", help="optional path for the processed FIF file")
     args = parser.parse_args()
     try:
-        raw = load_raw(Path(args.source).resolve())
+        raw = apply_config(load_raw(Path(args.source).resolve()), Path(args.source).resolve())
         start, stop, sfreq = select_range(raw, args.start, args.end)
         if args.modality == "EEG":
             selected_steps = {item.strip() for item in (args.steps or "").split(",") if item.strip()} or None
@@ -661,6 +684,14 @@ def main() -> int:
             "sampling_rate_hz": processed_sfreq if args.modality == "EEG" else sfreq,
             "selection": {"start_seconds": start / sfreq, "end_seconds": stop / sfreq, "sample_count": stop - start},
             "result": result, "preview": preview, "output": output,
+            "provenance": {
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "source_sha256": source_hash(Path(args.source).resolve()),
+                "python_version": platform.python_version(), "mne_version": mne.__version__,
+                "numpy_version": np.__version__, "command_parameters": vars(args),
+                "random_seed": 97, "bids_input": is_bids_path(Path(args.source).resolve()),
+                "import_configuration": get_config(Path(args.source).resolve()),
+            },
         }
         if args.output and args.modality == "EEG":
             # 审计报告与 FIF 同目录保存，包含参数、每步状态、降级原因和质量比较；
@@ -670,6 +701,22 @@ def main() -> int:
             report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2,
                                               allow_nan=False, default=json_default), encoding="utf-8")
             output["audit_file_name"] = report_path.name
+            output["output_sha256"] = source_hash(Path(args.output).resolve())
+            # A standalone human-readable audit report accompanies the machine-readable JSON.
+            comparison = result.get("quality_comparison", {})
+            before = comparison.get("before", {}).get("score", "-")
+            after = comparison.get("after", {}).get("score", "-")
+            rows = "".join(f"<tr><td>{item.get('step')}</td><td>{item.get('status')}</td><td>{item.get('detail','')}</td></tr>" for item in result.get("audit_log", []))
+            html_path = report_path.with_suffix(".html")
+            html_path.write_text(f"<!doctype html><meta charset='utf-8'><title>NeuroFlow audit</title><style>body{{font:14px Segoe UI;max-width:960px;margin:40px auto;color:#29483d}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border:1px solid #dce8e2;text-align:left}}</style><h1>NeuroFlow preprocessing audit</h1><p>Quality score: {before} → {after}</p><p>Input SHA-256: {payload['provenance']['source_sha256']}</p><table><tr><th>Step</th><th>Status</th><th>Detail</th></tr>{rows}</table>", encoding="utf-8")
+            output["audit_html_file_name"] = html_path.name
+            if is_bids_path(Path(args.source).resolve()):
+                derivative_description = output_path.parent / "dataset_description.json"
+                derivative_description.write_text(json.dumps({"Name": "NeuroFlow derivatives", "BIDSVersion": "1.10.0", "DatasetType": "derivative", "GeneratedBy": [{"Name": "NeuroFlow", "Version": "0.1", "Description": "MNE preprocessing with auditable parameters"}]}, indent=2), encoding="utf-8")
+                output["bids_derivative"] = True
+            report_payload = {key: value for key, value in payload.items() if key != "preview"}
+            report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2,
+                                              allow_nan=False, default=json_default), encoding="utf-8")
         print(json.dumps(payload, ensure_ascii=False, allow_nan=False, default=json_default))
         return 0
     except Exception as error:

@@ -1,9 +1,9 @@
-﻿const $ = selector => document.querySelector(selector);
+const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const i18n=globalThis.NeuroI18n;
 const t=(key,vars)=>i18n.t(key,vars);
 const templates = {
-  EEG: { name: 'sub-01_task-rest_eeg.edf', channels: '64', rate: '256', format: 'EDF', unit: 'μV', accept: '.edf,.bdf,.set,.fdt,.vhdr,.vmrk,.eeg', labels: ['Fp1','Fp2','F3','F4','C3','C4','P3','P4'], steps: [
+  EEG: { name: 'sub-01_task-rest_eeg.edf', channels: '64', rate: '256', format: 'EDF', unit: 'μV', accept: '.edf,.bdf,.gdf,.set,.fdt,.vhdr,.vmrk,.eeg,.fif,.cnt,.egi,.mff,.csv,.tsv,.txt,.mat,.bin,.dat,.raw', labels: ['Fp1','Fp2','F3','F4','C3','C4','P3','P4'], steps: [
     ['带通滤波', 'Band-pass filter', [['低频 Hz','0.5'],['高频 Hz','40']]],
     ['工频陷波', 'Notch filter', [['频率 Hz','50']]],
     ['坏道检测', 'Bad channel detection', [['方法','人工复核']]],
@@ -83,6 +83,18 @@ function renderDataset() {
   $('#signal-unit').textContent=t('signal.amplitude',{unit:shownPreview?.unit||template.unit});
   const processedTab=$('[data-signal="processed"]');if(processedTab)processedTab.disabled=!state.analysis?.preview?.processed;
   $('#dataset-count').textContent=state.datasets.length;
+  renderStructureReview(meta);
+  renderChannelLayout();
+  renderQuality();
+}
+
+function renderQuality(){
+  const card=$('#quality-card'),comparison=state.analysis?.result?.quality_comparison;card.hidden=!comparison;if(!comparison)return;
+  const canvas=$('#quality-canvas'),width=canvas.clientWidth||600,height=150,ratio=devicePixelRatio||1;canvas.width=width*ratio;canvas.height=height*ratio;
+  const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);ctx.clearRect(0,0,width,height);ctx.font='11px Segoe UI';
+  [['处理前',comparison.before.score,'#aebbb5'],['处理后',comparison.after.score,'#16846d']].forEach(([label,value,color],index)=>{const y=28+index*55;ctx.fillStyle='#718078';ctx.fillText(`${label} ${Number(value).toFixed(1)}`,0,y);ctx.fillStyle='#edf1ef';ctx.fillRect(90,y-14,width-110,18);ctx.fillStyle=color;ctx.fillRect(90,y-14,(width-110)*Math.max(0,Math.min(100,Number(value)))/100,18);});
+  const list=$('#audit-steps');list.replaceChildren();(state.analysis.result.audit_log||[]).forEach(item=>{const row=element('div',`audit-step ${item.status}`);row.append(element('strong','',item.step),element('span','',item.detail||item.status));list.append(row);});
+  $('#open-audit').disabled=!state.analysis?.output?.audit_relative_path;
 }
 function renderPipeline() {
   const list=$('#pipeline'); list.replaceChildren();
@@ -410,24 +422,17 @@ function renderChannelDetail(preview){
   $('#channel-samples').textContent=String(values.length);$('#channel-rate').textContent=`${Number(preview.sample_rate_hz).toFixed(2)} Hz`;
   $('#channel-min').textContent=formatSignalValue(Math.min(...values),unit);$('#channel-max').textContent=formatSignalValue(Math.max(...values),unit);$('#channel-mean').textContent=formatSignalValue(mean,unit);$('#channel-rms').textContent=formatSignalValue(rms,unit);
 }
-async function loadSignalWindow(){
-  if(!state.current?.datasetId||state.signalWindow.loading)return;
-  state.signalWindow.loading=true;
-  const source=state.processed?'processed':'raw',channel=state.singleChannel?state.selectedChannel:'';
-  const query=new URLSearchParams({source,start:String(state.signalWindow.start),duration:String(state.signalWindow.duration)});if(channel)query.set('channel',channel);
-  try{
-    const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/signal?${query}`,{signal:AbortSignal.timeout(45000)}),data=await response.json();
-    if(!response.ok)throw new Error(data.message||`HTTP ${response.status}`);
-    state.signalWindow.preview=data;state.signalWindow.start=Number(data.start_seconds)||0;drawSignal();
-  }catch(error){toast(t('signal.windowFailed',{message:error.message}));}
-  finally{state.signalWindow.loading=false;}
-}
 function updateSignalNavigation(preview){
-  const total=state.current?.inspection?.duration_seconds||0,slider=$('#signal-position'),enabled=Boolean(state.current?.datasetId&&preview);
+  const total=state.current?.inspection?.duration_seconds||0,slider=$('#signal-position'),enabled=Boolean(state.current?.datasetId&&total>0);
   state.signalWindow.duration=Math.min(state.signalWindow.duration,total||state.signalWindow.duration);
   const max=Math.max(0,total-state.signalWindow.duration);state.signalWindow.start=Math.min(state.signalWindow.start,max);
-  slider.disabled=!enabled;slider.max=String(max);slider.value=String(state.signalWindow.start);$('#signal-zoom-in').disabled=!enabled||state.signalWindow.duration<=.5;$('#signal-zoom-out').disabled=!enabled||state.signalWindow.duration>=Math.min(120,total||120);
-  $('#signal-window-label').textContent=`${state.signalWindow.start.toFixed(1)}–${(state.signalWindow.start+state.signalWindow.duration).toFixed(1)} s`;
+  const limits=signalZoomLimits(),zoomIn=$('#signal-zoom-in'),zoomOut=$('#signal-zoom-out'),english=i18n.getLocale()==='en';
+  slider.disabled=!enabled;slider.max=String(max);slider.value=String(state.signalWindow.start);
+  zoomIn.disabled=!enabled||state.signalWindow.duration<=limits.min;
+  zoomOut.disabled=!enabled||state.signalWindow.duration>=limits.max;
+  zoomIn.title=!enabled?(english?'Import a recording first':'请先导入数据'):(zoomIn.disabled?(english?'Maximum zoom: sample resolution reached':'已达到最大放大倍数（原始采样点分辨率）'):(english?'Zoom in on time':'放大时间轴'));
+  zoomOut.title=!enabled?(english?'Import a recording first':'请先导入数据'):(zoomOut.disabled?(english?'Maximum time window reached':'已达到最大时间窗口'):(english?'Zoom out on time':'缩小时间轴'));
+  $('#signal-window-label').textContent=`${state.signalWindow.start.toFixed(3)}–${(state.signalWindow.start+state.signalWindow.duration).toFixed(3)} s`;
 }
 function exportSelectedChannel(){
   const preview=activeSignalPreview(),index=preview?.channel_names?.indexOf(state.selectedChannel);if(index===undefined||index<0)return;
@@ -494,12 +499,13 @@ function drawSignal(){
   const canvas=$('#signal-canvas');const preview=activeSignalPreview();const series=preview?.data;const labels=preview?.channel_names||templates[state.mode].labels;const channelCount=Math.max(1,Math.min(8,series?.length||labels.length));const width=canvas.clientWidth,height=canvas.clientHeight;if(!width)return;const ratio=window.devicePixelRatio||1;canvas.width=width*ratio;canvas.height=height*ratio;const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);const left=state.mode==='MEG'?62:45,right=14,top=9,bottom=22,plotWidth=width-left-right,rowHeight=(height-top-bottom)/channelCount;
   ctx.fillStyle='#ffffff';ctx.fillRect(0,0,width,height);ctx.font='8px Segoe UI';ctx.lineWidth=.6;
   const duration=series?.[0]?.length&&preview.sample_rate_hz?series[0].length/preview.sample_rate_hz:10,startTime=Number(preview?.start_seconds)||0;
-  for(let tick=0;tick<=10;tick++){const x=left+plotWidth*tick/10;ctx.strokeStyle='#edf1ee';ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.fillStyle='#a7b0aa';ctx.fillText((startTime+duration*tick/10).toFixed(duration<10?1:0),x-2,height-5);}
+  for(let tick=0;tick<=10;tick++){const x=left+plotWidth*tick/10;ctx.strokeStyle='#edf1ee';ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.fillStyle='#a7b0aa';ctx.fillText((startTime+duration*tick/10).toFixed(duration<.1?4:duration<1?3:duration<10?1:0),x-2,height-5);}
   labels.slice(0,channelCount).forEach((label,index)=>{const y=top+rowHeight*(index+.5);ctx.fillStyle='#9aa79f';ctx.fillText(label,1,y+3);ctx.strokeStyle='#f2f5f3';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();const selected=Boolean(preview)&&label===state.selectedChannel;ctx.strokeStyle=selected?'#0b6657':state.processed?'#52a18d':'#8bb0a5';ctx.lineWidth=selected?1.8:.72;ctx.globalAlpha=preview&&!selected?.48:1;ctx.beginPath();if(series?.[index]?.length){const values=series[index];const center=values.reduce((sum,value)=>sum+value,0)/values.length;const peak=Math.max(...values.map(value=>Math.abs(value-center)),Number.EPSILON);values.forEach((value,sample)=>{const x=left+plotWidth*sample/Math.max(1,values.length-1),point=y-(value-center)/peak*rowHeight*.36;if(sample===0)ctx.moveTo(x,point);else ctx.lineTo(x,point);});}else{for(let pixel=0;pixel<=plotWidth;pixel++){const time=pixel/plotWidth*10;let amplitude=state.mode==='fNIRS'?Math.sin(time*1.7+index)*4+Math.sin(time*4+index)*1.7:Math.sin(time*15+index*2)*2.5+Math.sin(time*36+index)*1.6+Math.sin(time*68+index*4)*1.2;amplitude+=Math.sin(time*123+index)*.7;if(!state.processed&&state.mode!=='fNIRS')amplitude+=Math.exp(-((time-(3+index*.28))**2)/.015)*7;const point=y-amplitude*(state.processed?.65:1);if(pixel===0)ctx.moveTo(left+pixel,point);else ctx.lineTo(left+pixel,point);}}ctx.stroke();});
-  $('#signal-caption').textContent=preview?t('signal.realCaption',{count:channelCount,duration:duration.toFixed(1)}):t('signal.caption');$('#signal-unit').textContent=t('signal.amplitude',{unit:preview?.unit||templates[state.mode].unit});$('.signal-card .pill').textContent=preview?t('badge.real'):t('badge.synthetic');$('.chart-footer span:first-child').textContent=preview?t('signal.realDisclaimer'):t('signal.disclaimer');
+  $('#signal-caption').textContent=preview?t('signal.realCaption',{count:channelCount,duration:duration.toFixed(duration<1?3:1)}):t('signal.caption');$('#signal-unit').textContent=t('signal.amplitude',{unit:preview?.unit||templates[state.mode].unit});$('.signal-card .pill').textContent=preview?t('badge.real'):t('badge.synthetic');$('.chart-footer span:first-child').textContent=preview?t('signal.realDisclaimer'):t('signal.disclaimer');
   canvas.setAttribute('aria-label',preview?t(state.processed?'signal.processedAria':'signal.rawAria'):t('signal.syntheticAria'));
   renderChannelDetail(preview);
   updateSignalNavigation(preview);
+  renderChannelLayout();
 }
 
 // 为现有页面绑定翻译键。wrapOwnText 只包装元素自己的文字，不会破坏其中的图标、
@@ -557,15 +563,17 @@ $('#dropzone').addEventListener('dragover',event=>{event.preventDefault();$('#dr
 $('#reset-pipeline').addEventListener('click',()=>{if(state.running)return toast(t('toast.resetWait'));const current=state.current;setMode(state.mode);state.current=current;renderDataset();toast(t('toast.resetDone'));});
 $('#add-pipeline-step').addEventListener('click',()=>{if(state.running)return toast(t('toast.wait'));renderAlgorithmLibrary();$('#algorithm-dialog').showModal();});
 $('#close-algorithms').addEventListener('click',()=>$('#algorithm-dialog').close());
+$('#review-structure').addEventListener('click',openStructureReview);
+$('#open-audit').addEventListener('click',()=>{const path=state.analysis?.output?.audit_relative_path;if(path&&globalThis.desktop?.showOutput)globalThis.desktop.showOutput(path).catch(error=>toast(error.message));});
 $('#export-config').addEventListener('click',()=>download(configSnapshot(),`neuroflow-${state.mode}-pipeline.json`));
 $('#run-button').addEventListener('click',runPipeline);
 $$('[data-signal]').forEach(button=>button.addEventListener('click',()=>{if(button.dataset.signal==='processed'&&!state.analysis?.preview?.processed)return toast(t('toast.runForProcessed'));state.processed=button.dataset.signal==='processed';state.signalWindow.preview=null;state.signalWindow.start=0;$$('[data-signal]').forEach(item=>item.classList.toggle('selected',item===button));drawSignal();renderDataset();if(state.singleChannel)loadSignalWindow();}));
 $('#channel-select').addEventListener('change',event=>{state.singleChannel=event.target.value!=='__all__';state.selectedChannel=state.singleChannel?event.target.value:null;state.signalWindow.preview=null;loadSignalWindow();});
 $('#export-channel').addEventListener('click',exportSelectedChannel);
 $('#signal-canvas').addEventListener('click',event=>{const preview=activeSignalPreview(),names=preview?.channel_names||[];if(!names.length)return;const rect=event.currentTarget.getBoundingClientRect(),index=Math.max(0,Math.min(names.length-1,Math.floor((event.clientY-rect.top)/rect.height*names.length)));state.selectedChannel=names[index];state.singleChannel=true;state.signalWindow.preview=null;loadSignalWindow();});
-let signalSlideTimer;$('#signal-position').addEventListener('input',event=>{state.signalWindow.start=Number(event.target.value);$('#signal-window-label').textContent=`${state.signalWindow.start.toFixed(1)}–${(state.signalWindow.start+state.signalWindow.duration).toFixed(1)} s`;clearTimeout(signalSlideTimer);signalSlideTimer=setTimeout(()=>{state.signalWindow.preview=null;loadSignalWindow();},180);});
-$('#signal-zoom-in').addEventListener('click',()=>{state.signalWindow.duration=Math.max(.5,state.signalWindow.duration/2);state.signalWindow.preview=null;loadSignalWindow();});
-$('#signal-zoom-out').addEventListener('click',()=>{const total=state.current?.inspection?.duration_seconds||120;state.signalWindow.duration=Math.min(120,total,state.signalWindow.duration*2);state.signalWindow.preview=null;loadSignalWindow();});
+installSignalNavigation();
+$('#signal-zoom-in').addEventListener('click',()=>zoomSignalWindow(.5));
+$('#signal-zoom-out').addEventListener('click',()=>zoomSignalWindow(2));
 $('#chat-form').addEventListener('submit',event=>{event.preventDefault();if(state.sending){state.streamController?.abort();return;}sendMessage($('#chat-input').value);});
 $('#chat-input').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();sendMessage(event.target.value);}});
 $$('[data-prompt]').forEach(button=>button.addEventListener('click',()=>sendMessage(button.dataset.i18n?t(button.dataset.i18n):button.dataset.prompt)));

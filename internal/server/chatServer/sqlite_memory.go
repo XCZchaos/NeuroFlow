@@ -1,6 +1,7 @@
 package chatServer
 
 import (
+	"OnCallAgent/internal/server/taskstate"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -28,8 +29,13 @@ func NewSQLiteMemoryStore(path string) (*SQLiteMemoryStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("打开长期记忆数据库失败: %w", err)
 	}
+	db.SetMaxOpenConns(1) // PRAGMA foreign_keys applies to this single connection.
 	store := &SQLiteMemoryStore{db: db}
 	if err = store.migrate(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = (&taskstate.Store{DB: db}).Init(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -363,3 +369,6 @@ func emptyAsUnknown(value string) string {
 	}
 	return value
 }
+
+// TaskStore shares session lifecycle and durable SQLite storage.
+func (s *SQLiteMemoryStore) TaskStore() *taskstate.Store { return &taskstate.Store{DB: s.db} }

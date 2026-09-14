@@ -18,24 +18,34 @@ import (
 // Inspection 对应 Python 检查器返回的 JSON。
 // 这些字段属于文件元数据，不能被解释为已经完成了信号质量分析或预处理。
 type Inspection struct {
-	OK                bool           `json:"ok"`
-	Code              string         `json:"code,omitempty"`
-	Message           string         `json:"message,omitempty"`
-	Format            string         `json:"format,omitempty"`
-	Reader            string         `json:"reader,omitempty"`
-	Modality          string         `json:"modality,omitempty"`
-	SamplingRateHz    float64        `json:"sampling_rate_hz,omitempty"`
-	ChannelCount      int            `json:"channel_count,omitempty"`
-	ChannelNames      []string       `json:"channel_names,omitempty"`
-	ChannelTypeCounts map[string]int `json:"channel_type_counts,omitempty"`
-	DurationSeconds   float64        `json:"duration_seconds,omitempty"`
-	SampleCount       int64          `json:"sample_count,omitempty"`
-	BadChannels       []string       `json:"bad_channels,omitempty"`
-	LineFrequencyHz   *float64       `json:"line_frequency_hz,omitempty"`
-	AnnotationCount   int            `json:"annotation_count,omitempty"`
-	SourceName        string         `json:"source_name,omitempty"`
-	SourceSizeBytes   *int64         `json:"source_size_bytes,omitempty"`
-	Supported         []string       `json:"supported_extensions,omitempty"`
+	OK                        bool              `json:"ok"`
+	Code                      string            `json:"code,omitempty"`
+	Message                   string            `json:"message,omitempty"`
+	Format                    string            `json:"format,omitempty"`
+	Reader                    string            `json:"reader,omitempty"`
+	Modality                  string            `json:"modality,omitempty"`
+	SamplingRateHz            float64           `json:"sampling_rate_hz,omitempty"`
+	ChannelCount              int               `json:"channel_count,omitempty"`
+	ChannelNames              []string          `json:"channel_names,omitempty"`
+	ChannelTypeCounts         map[string]int    `json:"channel_type_counts,omitempty"`
+	DurationSeconds           float64           `json:"duration_seconds,omitempty"`
+	SampleCount               int64             `json:"sample_count,omitempty"`
+	BadChannels               []string          `json:"bad_channels,omitempty"`
+	LineFrequencyHz           *float64          `json:"line_frequency_hz,omitempty"`
+	AnnotationCount           int               `json:"annotation_count,omitempty"`
+	SourceName                string            `json:"source_name,omitempty"`
+	SourceSizeBytes           *int64            `json:"source_size_bytes,omitempty"`
+	Supported                 []string          `json:"supported_extensions,omitempty"`
+	StructureConfidence       float64           `json:"structure_confidence,omitempty"`
+	StructureReport           map[string]any    `json:"structure_report,omitempty"`
+	ChannelNameMapping        map[string]string `json:"channel_name_mapping,omitempty"`
+	Montage                   string            `json:"montage,omitempty"`
+	SignalUnit                string            `json:"signal_unit,omitempty"`
+	UnitConfidence            float64           `json:"unit_confidence,omitempty"`
+	EventDictionary           any               `json:"event_dictionary,omitempty"`
+	EventsRequireConfirmation bool              `json:"events_require_confirmation,omitempty"`
+	StructureWarnings         []string          `json:"structure_warnings,omitempty"`
+	StructureConflicts        []string          `json:"structure_conflicts,omitempty"`
 }
 
 // Record 把一次已解析的数据集绑定到随机 ID。
@@ -112,6 +122,44 @@ func Get(id string) (Record, bool) {
 		return Record{}, false
 	}
 	return value.(Record), true
+}
+
+// ReviewStructure 重新读取源文件。候选配置验证成功后才更新注册信息。
+// Python 将确认配置持久化，预览、检查和分析共用它，不修改原始采集文件。
+func ReviewStructure(ctx context.Context, id string, config map[string]any, commit bool) (Record, error) {
+	record, ok := Get(id)
+	if !ok {
+		return Record{}, fmt.Errorf("dataset not found")
+	}
+	script, err := datasetScriptPath("review_dataset.py")
+	if err != nil {
+		return Record{}, err
+	}
+	mode := "preview"
+	if commit {
+		mode = "commit"
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return Record{}, err
+	}
+	cmd := exec.CommandContext(ctx, "python", script, record.path, mode)
+	cmd.Stdin = bytes.NewReader(encoded)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	runErr := cmd.Run()
+	var inspection Inspection
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &inspection); err != nil {
+		return Record{}, fmt.Errorf("structure reread failed: %v (%s)", err, stderr.String())
+	}
+	if runErr != nil || !inspection.OK {
+		return Record{}, &InspectError{Inspection: inspection}
+	}
+	record.Inspection = inspection
+	if commit {
+		records.Store(id, record)
+	}
+	return record, nil
 }
 
 // ResolveLocalPath 仅供后端执行本地算法使用。Record 的 path 字段不会参与 JSON

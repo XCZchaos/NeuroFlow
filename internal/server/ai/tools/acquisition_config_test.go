@@ -25,6 +25,18 @@ func TestValidateAcquisitionConfigToolSchema(t *testing.T) {
 	}
 }
 
+func TestDeviceProfileDetectsConflict(t *testing.T) {
+	result := BuildAcquisitionValidation(AcquisitionConfigInput{
+		Device: "OpenBCI Cyton", Modality: "EEG", ChannelCount: 2, SamplingRateHz: 250,
+	}, nil)
+	if result.DeviceProfile == nil || result.DeviceProfile.CanonicalName != "OpenBCI Cyton" {
+		t.Fatalf("device profile was not resolved: %+v", result.DeviceProfile)
+	}
+	if result.Status != "conflict" {
+		t.Fatalf("expected device channel conflict, got %+v", result)
+	}
+}
+
 func TestBuildAcquisitionValidationFindsFileConflicts(t *testing.T) {
 	lineFrequency := 50.0
 	observed := &dataset.Inspection{OK: true, Modality: "EEG", ChannelCount: 4,

@@ -15,6 +15,7 @@ type chatHandler struct {
 }
 
 type ChatHandler interface {
+	SessionTask() gin.HandlerFunc
 	Chat() gin.HandlerFunc
 	ChatSream() gin.HandlerFunc
 	CreateSession() gin.HandlerFunc
@@ -212,5 +213,17 @@ func (c *chatHandler) ChatSream() gin.HandlerFunc {
 		}
 		ctx.SSEvent("done", "[DONE]")
 		ctx.Writer.Flush()
+	}
+}
+
+// SessionTask exposes durable progress to clients without an LLM call.
+func (c *chatHandler) SessionTask() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		state, err := c.chat.Task(ctx.Request.Context(), ctx.Param("id"))
+		if err != nil {
+			ctx.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+			return
+		}
+		ctx.JSON(http.StatusOK, gin.H{"task": state})
 	}
 }

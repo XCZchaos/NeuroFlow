@@ -32,7 +32,7 @@ app.whenReady().then(() => {
       title: '选择神经信号数据', properties: ['openFile', 'multiSelections'],
       // filters 只帮助用户筛选文件，不承担最终格式验证；真正验证由 Python 适配器完成。
       filters: [
-        { name: '神经信号数据', extensions: ['edf','bdf','gdf','vhdr','set','fif','snirf','nirs','cnt','egi','mff','con','sqd'] },
+        { name: '神经信号数据', extensions: ['edf','bdf','gdf','vhdr','set','fif','snirf','nirs','cnt','egi','mff','con','sqd','csv','tsv','txt','mat','bin','dat','raw'] },
         { name: '所有文件', extensions: ['*'] }
       ]
     });

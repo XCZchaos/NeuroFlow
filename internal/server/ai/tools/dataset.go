@@ -19,7 +19,7 @@ type InspectDatasetInput struct {
 // 没有这些字段时，模型提示用户重新导入，不能自行编造。
 func InspectDatasetTool() (tool.InvokableTool, error) {
 	return utils.InferTool("inspect_dataset",
-		"读取已注册神经信号数据集的可信元数据，包括格式、模态、通道数、采样率、时长、通道类型、标注与已标记坏道。回答文件事实问题时优先使用。",
+		"读取已注册神经信号数据集的可信元数据，包括格式、模态、通道数、采样率、时长、通道类型、标注、结构置信度、单位检查、通道名标准化、montage 匹配、事件字典及冲突。若 requires_confirmation 或 events_require_confirmation 为 true，执行依赖这些推断的处理前必须向用户说明待确认项。",
 		func(ctx context.Context, input InspectDatasetInput) (string, error) {
 			record, ok := dataset.Get(input.DatasetID)
 			if !ok {

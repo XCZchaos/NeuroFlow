@@ -16,6 +16,28 @@ type registerDatasetRequest struct {
 	Path string `json:"path" binding:"required"`
 }
 
+// 试读与确认使用同一个 Python 读取器，不能仅凭客户端声明就清除冲突。
+func ConfirmDatasetStructure() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		var config map[string]any
+		if err := ctx.ShouldBindJSON(&config); err != nil {
+			ctx.JSON(400, gin.H{"message": err.Error()})
+			return
+		}
+		readCtx, cancel := context.WithTimeout(ctx.Request.Context(), 90*time.Second)
+		defer cancel()
+		record, err := dataset.ReviewStructure(readCtx, ctx.Param("id"), config, ctx.Query("preview") != "true")
+		if err != nil {
+			ctx.JSON(422, gin.H{"message": err.Error()})
+			return
+		}
+		if ctx.Query("preview") != "true" {
+			aitools.InvalidateDatasetAnalysis(ctx.Param("id"))
+		}
+		ctx.JSON(200, record)
+	}
+}
+
 // SignalWindow 按需读取单通道时间窗。source=processed 需要最近一次分析已保存 FIF；
 // 不保存模式仍可查看分析响应中的整体抽稀预览，但不能从已结束的 Python 进程重读完整结果。
 func SignalWindow() gin.HandlerFunc {

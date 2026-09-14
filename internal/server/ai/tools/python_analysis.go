@@ -2,6 +2,7 @@ package tools
 
 import (
 	"OnCallAgent/internal/server/dataset"
+	"OnCallAgent/internal/server/taskstate"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,9 @@ import (
 // latestAnalysis 保存每个数据集最近一次成功结果，供本地 Electron 在 Agent
 // function call 完成后取回波形。只保留一份，避免多次分析持续占用内存。
 var latestAnalysis sync.Map
+
+// InvalidateDatasetAnalysis prevents an old result being presented as output of newly reviewed data.
+func InvalidateDatasetAnalysis(id string) { latestAnalysis.Delete(id) }
 
 // NeuroAnalysisInput 是大模型可以填写的 function-call 参数。波形和本地路径
 // 不进入参数；dataset_id 由后端解析为用户已经导入的本地文件。
@@ -50,6 +55,16 @@ func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 	return utils.InferTool("run_neuro_analysis",
 		"使用本地 Python/MNE 对已导入 EEG 或 fNIRS 数据执行真实计算。EEG full 模式支持坏道检测与插值、陷波、带通、重参考、ICA、重采样、基于 annotations/stim 的事件分段、基线校正和 Epoch 峰峰值伪迹拒绝，并返回处理前后质量与逐步审计记录；fNIRS 支持光密度、TDDR、Beer-Lambert、滤波、耦合质量和 HbO/HbR 统计。需要 dataset_id；不支持 MEG。",
 		func(ctx context.Context, input NeuroAnalysisInput) (string, error) {
+			// A waiting task must not be bypassed by a second model tool call.
+			if scope, ok := taskstate.FromContext(ctx); ok {
+				state, err := scope.Store.Get(ctx, scope.SessionID)
+				if err != nil {
+					return "", err
+				}
+				if state != nil && state.Active() {
+					return `{"ok":false,"code":"TASK_REQUIRES_RESUME","message":"Use manage_preprocessing_task get/answer/validate/resume; pending task blocks direct execution"}`, nil
+				}
+			}
 			saveOutput := true
 			if input.SaveOutput != nil {
 				saveOutput = *input.SaveOutput
@@ -107,6 +122,12 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 	}
 	if inspection.Modality != "EEG" && inspection.Modality != "fNIRS" {
 		return nil, fmt.Errorf("Python 分析工具当前支持 EEG 和 fNIRS，数据模态为 %s", inspection.Modality)
+	}
+	if len(inspection.StructureConflicts) > 0 {
+		return nil, fmt.Errorf("数据结构仍有冲突，请先在 Electron 的数据结构确认页面核对后再运行")
+	}
+	if inspection.EventsRequireConfirmation && slices.Contains(input.EnabledSteps, "epoching") {
+		return nil, fmt.Errorf("事件字典尚未确认；事件分段前请先在数据结构确认页面确认事件含义")
 	}
 	script, err := neuroAnalysisScriptPath()
 	if err != nil {
@@ -169,6 +190,9 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 		}
 		if auditName, ok := output["audit_file_name"].(string); ok {
 			output["audit_relative_path"] = filepath.ToSlash(filepath.Join("outputs", input.DatasetID, auditName))
+		}
+		if auditHTMLName, ok := output["audit_html_file_name"].(string); ok {
+			output["audit_html_relative_path"] = filepath.ToSlash(filepath.Join("outputs", input.DatasetID, auditHTMLName))
 		}
 		if epochsName, ok := output["epochs_file_name"].(string); ok {
 			output["epochs_relative_path"] = filepath.ToSlash(filepath.Join("outputs", input.DatasetID, epochsName))

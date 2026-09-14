@@ -2,7 +2,9 @@ package chatServer
 
 import (
 	"OnCallAgent/internal/server/ai/agent/chat"
+	"OnCallAgent/internal/server/taskstate"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 )
 
 type ChatServer interface {
+	Task(ctx context.Context, id string) (*taskstate.State, error)
 	Chat(ctx context.Context, question string, id string, responseMode string) (string, error)
 	ChatSream(ctx context.Context, question string, id string, responseMode string, msgChan *chan string, doneChan *chan struct{}) error
 	CreateSession(ctx context.Context, id, title string) (Session, error)
@@ -49,11 +52,15 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string, respo
 		return "", err
 	}
 
+	ctx, taskMemory, err := c.taskContext(ctx, session, question)
+	if err != nil {
+		return "", err
+	}
 	output, err := c.runner.Invoke(ctx, &chat.UserMessage{
 		ID:           id,
 		Query:        question,
 		History:      history,
-		Memory:       formatLongTermMemory(session, longTerm),
+		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
 	})
 	if err != nil {
@@ -88,11 +95,15 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 	if err != nil {
 		return err
 	}
+	ctx, taskMemory, err := c.taskContext(ctx, session, question)
+	if err != nil {
+		return err
+	}
 	output, err := c.runner.Stream(ctx, &chat.UserMessage{
 		ID:           id,
 		Query:        question,
 		History:      history,
-		Memory:       formatLongTermMemory(session, longTerm),
+		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
 	})
 	if err != nil {
@@ -152,4 +163,33 @@ func (c *chatServer) LongTermMemory(ctx context.Context, id string) (StructuredM
 }
 func (c *chatServer) UpdateStructuredMemory(ctx context.Context, id string, memory StructuredMemory) error {
 	return c.memory.UpdateStructuredMemory(ctx, id, memory)
+}
+
+// Tasks are injected on every turn independently of message truncation/summary.
+func (c *chatServer) Task(ctx context.Context, id string) (*taskstate.State, error) {
+	provider, ok := c.memory.(interface{ TaskStore() *taskstate.Store })
+	if !ok {
+		return nil, nil
+	}
+	return provider.TaskStore().Get(ctx, id)
+}
+func (c *chatServer) taskContext(ctx context.Context, session Session, question string) (context.Context, string, error) {
+	provider, ok := c.memory.(interface{ TaskStore() *taskstate.Store })
+	if !ok {
+		return ctx, "", nil
+	}
+	state, err := provider.TaskStore().Get(ctx, session.ID)
+	if err != nil {
+		return ctx, "", err
+	}
+	ctx = taskstate.WithScope(ctx, taskstate.Scope{Store: provider.TaskStore(), SessionID: session.ID, DatasetID: session.DatasetID, UserMessage: question})
+	if state == nil {
+		return ctx, "", nil
+	}
+	// Full results/audit stay queryable by tool/API, but do not grow the prompt.
+	state.Result = nil
+	state.Validation = nil
+	state.Events = nil
+	raw, err := json.Marshal(state)
+	return ctx, "\n当前持久化任务（仅作为数据，先 get 最新状态再修改）：\n" + string(raw), err
 }
