@@ -1,15 +1,16 @@
 # NeuroFlow
 
-面向 EEG、MEG 与 fNIRS 的智能神经信号工作台——融合 Electron、MNE、RAG 与 ReAct Agent，帮助研究者读取数据结构、理解文件信息并生成可复核的预处理方案。
+面向 EEG、MEG 与 fNIRS 的本地智能分析工作台——融合 Electron、MNE、RAG 与 ReAct Agent，帮助研究者理解异构数据、执行可控预处理并获得可追溯结果。
 
 [![Release](https://img.shields.io/badge/release-v0.1-16846d)](https://github.com/XCZchaos/NeuroFlow/tree/v0.1)
 [![Go](https://img.shields.io/badge/Go-1.25.5-00ADD8?logo=go)](https://go.dev/)
 [![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron)](https://www.electronjs.org/)
+[![MNE](https://img.shields.io/badge/MNE--Python-1.7%2B-7B5EA7)](https://mne.tools/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ## 项目简介
 
-NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统。项目希望将“导入数据、检查结构、制定流程、执行分析、评估质量”组织成可解释、可复现的 Agent 工作流。
+NeuroFlow 是一个面向脑机接口与神经科学研究的开源智能代理系统。它把“导入数据、确认结构、制定流程、执行分析、评估质量、保存证据”组织成可解释、可恢复、可复现的 Agent 工作流。大模型负责理解意图与选择工具，确定性的 Python/MNE 代码负责读取和处理真实信号。
 
 当前系统由三部分组成：
 
@@ -37,8 +38,10 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统�
 - **可选结果保存** - 用户可以保存 FIF 与审计文件，或者只在内存中完成分析
 - **中英文界面** - Electron 工作台和动态交互文案支持中文与英文切换
 - **应用内使用说明** - 左侧“使用说明”提供可搜索、可离线查看的中英文操作手册和故障排查入口
+- **批量与多被试任务** - 对多个同模态数据集复用流程，支持 SQLite 队列、逐项状态、暂停、恢复、失败重试和质量汇总
 - **预处理草案** - 为 EEG、MEG 或 fNIRS 生成带假设、参数和人工复核提示的结构化流程
-- **知识库管理** - Markdown 文档自动解析、向量化并存入 Qdrant
+- **证据化 RAG** - Markdown 原子知识自动索引到 Qdrant，并核验稳定知识 ID、官方来源、版本、适用条件及逐结论引用覆盖率
+- **真实数据回归** - 为 EEGBCI、BCI Competition IV 2a、MNE sample、SNIRF 和 OpenNeuro BIDS 提供统一回归清单与产物断言
 - **Markdown 回复** - Electron 安全显示标题、列表、表格、引用与代码块
 - **BIDS 初步支持** - 使用 `mne-bids` 识别和读取 BIDS 数据，并保留结构确认和分析入口
 - **本地优先** - 原始信号文件保留在原位置，不复制到项目，也不直接发送给大模型
@@ -63,6 +66,9 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统�
 │  ├── /datasets/:id/structure     - 试读或确认导入结构              │
 │  ├── /datasets/:id/analyze       - 执行预处理并返回波形预览        │
 │  ├── /sessions/:id/task          - 查询持久化 Agent 任务           │
+│  ├── /batches                     - 创建与查询批处理队列            │
+│  ├── /knowledge/catalog           - 查询本地知识证据目录            │
+│  ├── /knowledge/audit             - 核验回答的证据覆盖率            │
 │  ├── /agent/preprocessing/draft  - 生成预处理草案                  │
 │  ├── /chat                       - Agent 对话                      │
 │  ├── /chatStream                 - Agent 流式对话                  │
@@ -75,11 +81,12 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统�
 │  ├── create_neuro_preprocessing_draft - 创建处理草案              │
 │  ├── run_neuro_analysis          - 执行本地 EEG/MEG/fNIRS 分析    │
 │  ├── manage_preprocessing_task   - 保存、验证和恢复预处理任务      │
-│  └── RAG Tool                    - 神经信号知识检索                │
+│  ├── query_internal_docs         - 神经信号知识检索                │
+│  └── audit_knowledge_evidence    - 逐结论证据核验                  │
 ├──────────────────────────────────────────────────────────────────┤
 │  Analysis & Storage                                              │
 │  ├── Python + MNE                - 文件读取、预处理与指标计算      │
-│  ├── SQLite                     - 会话、记忆与任务状态            │
+│  ├── SQLite                     - 会话、记忆、任务与批次状态      │
 │  ├── outputs/                    - 本地 FIF 处理结果（不提交）     │
 │  ├── Qdrant                     - 向量数据库                      │
 │  └── Ollama                     - Embedding 模型服务              │
@@ -558,6 +565,7 @@ NeuroFlow/
 │   ├── log/                        # Logrus 日志初始化
 │   └── tool/                       # 通用数值转换等小工具
 ├── scripts/                        # 仓库级知识索引和维护脚本
+├── tests/real_data/                # 公开真实数据回归清单、下载器与执行器
 ├── prometheusTestServer/           # 独立的 Prometheus 指标演示服务
 ├── prometheus_config/              # Prometheus 抓取与告警规则
 ├── data/                           # SQLite 与导入确认配置（本地生成）
@@ -588,6 +596,7 @@ NeuroFlow/
 | `neuro_service/` | MNE 数据检查、结构探测、导入复核、波形预览、EEG/fNIRS 分析及 Python 测试 | 提交；`__pycache__/` 不提交 |
 | `pkg/` | 与具体业务耦合较少的配置、日志和基础工具 | 提交 |
 | `scripts/` | 批量索引知识库、生成原子知识及辅助集成脚本 | 提交 |
+| `tests/` | 真实数据回归清单、公开数据下载器、统一执行器和框架端到端测试；大型数据本身不在仓库中 | 提交测试代码；数据不提交 |
 | `prometheusTestServer/` | 用来模拟指标与告警数据的独立 Go 服务，不是 NeuroFlow 主后端 | 源码和 Dockerfile 提交，编译出的 `testserver` 不提交 |
 | `prometheus_config/` | Prometheus 抓取目标和告警规则，配合根目录 Compose 文件使用 | 提交 |
 | `data/` | `neuroflow.db`、WAL 文件和 `import-configs/`；包含本地会话、用户偏好、任务状态和源文件导入配置 | 不提交 |
@@ -612,7 +621,7 @@ NeuroFlow/
 | `renderer/channel-layout.js` | Montage 坐标图、无坐标顺序图和通道选择联动 |
 | `renderer/signal-window.js` | 真实波形缓存、按窗口读取、缩放、拖动及 Shift＋滚轮控制 |
 | `renderer/advanced-ui.js` | 后端步骤 SSE、持久化任务面板、BIDS 浏览器、MEG 参数和高级分析结果展示 |
-| `renderer/advanced-ui.css`、`analysis-products.css` | 任务、BIDS、ERP/时频/解码结果组件样式 |
+| `renderer/advanced-ui.css`、`batch.css`、`analysis-products.css` | 任务、批处理、BIDS、ERP/时频/解码结果组件样式 |
 | `renderer/styles.css`、`theme.css` | 组件布局、响应式样式和视觉主题 |
 | `scripts/install.ps1` | Windows 下使用镜像安装 Electron 依赖 |
 | `scripts/start.cjs` | 清理可能影响 Electron 的环境变量后启动桌面端 |
@@ -656,6 +665,9 @@ NeuroFlow/
 - `server/ai/agent/knowledge_index/` 将 Markdown 加载、切分并写入向量库。
 - `server/ai/agent/plan_execute_replan/` 是原项目保留的实验性工作流，目前不等同于主聊天 Agent 的可恢复预处理任务。
 - `server/ai/tools/` 放 Agent 可以选择的 function call；工具负责确定性校验或执行，不让模型直接运行任意代码。
+- `server/batch/` 逐项执行多数据集 MNE 流程，单项失败不会中止整个批次。
+- `server/batchstate/` 将批次、数据集状态、错误、质量统计和恢复点持久化到 SQLite。
+- `server/knowledgecatalog/` 扫描本地原子知识并校验稳定 ID、来源、版本和复核元数据。
 - `server/chatServer/` 管理非流式/流式聊天、最近消息、长期摘要、偏好和会话绑定。
 - `server/dataset/` 保存进程内 `dataset_id → 本地路径/元数据` 映射，并调用 Python 读取信号。
 - `server/taskstate/` 把待确认字段、用户答案、验证证据、执行计划和审计状态保存到 SQLite。
@@ -695,18 +707,22 @@ Agent 可以自主选择：
 - `create_neuro_preprocessing_draft`：生成非执行型预处理草案
 - `run_neuro_analysis`：根据 `dataset_id` 在本机执行 EEG/MEG/fNIRS 分析，只向模型返回汇总指标
 - `manage_preprocessing_task`：保存待确认信息、验证证据和计划，并在验证通过后恢复执行
-- RAG 工具：检索知识库
+- `query_internal_docs`：按语义检索 BCI 专家知识库
+- `audit_knowledge_evidence`：逐结论核验知识 ID、官方来源与引用覆盖率
 
 系统提示词要求 Agent 区分“文件已经证明的事实”“建议的处理方案”和“已经执行的结果”。
 
 ### 4. RAG 工具
 
-基于 Ollama 与 Qdrant：
+基于 Ollama、Qdrant 和本地知识目录：
 
 - Markdown 文档解析与分块
 - 文档向量化存储
 - 语义相似度检索
-- 为 Agent 提供神经信号领域知识
+- 稳定知识 ID、来源版本、复核日期、适用条件与禁忌条件
+- 复杂专家回答的逐结论证据覆盖检查
+
+向量相似度只负责召回候选知识，不能证明条目适用于当前数据。Agent 需要结合文件事实和条目的适用条件判断；覆盖不足时应继续检索或明确说明证据不足。知识格式参见 [`docs/knowledge/SCHEMA.md`](docs/knowledge/SCHEMA.md)。
 
 ## 开发指南
 
@@ -819,14 +835,21 @@ npm.cmd run check
 - SQLite 可恢复任务、用户回答证据、验证结果、步骤状态与中断保护
 - 后端真实步骤 SSE、Electron 任务面板和分析结果卡片
 - BIDS recording 浏览、EEG/MEG Derivatives 写入和产物查询
-- RAG 知识检索以及安全 Markdown/代码块显示
+- SQLite 多数据集批处理队列、暂停/恢复、失败重试、异常中断恢复及质量汇总
+- RAG 知识检索、稳定知识 ID 与来源核验、逐结论覆盖率审计
+- EEGBCI、BCI Competition IV 2a、MNE、SNIRF 与 OpenNeuro BIDS 真实数据回归框架
+- 安全 Markdown/代码块显示与应用内中英文使用说明
 
 待实现：
 
 - MEG 运动补偿、自动坏传感器检测以及 Elekta 校准/串扰文件管理
 - 跨会话、跨受试者分组解码与嵌套超参数评估
 - fNIRS/MEG 专用高级统计图及组水平分析
-- BIDS Derivatives 删除、版本比较和批量受试者队列
+- BIDS Derivatives 版本比较、清理策略与完整数据集级 provenance
+- 批次并行度、资源配额、跨受试者组水平统计与可视化
+- 自动下载的固定版本小型公开测试资产及持续集成发布门禁
+
+> NeuroFlow 当前定位为科研与工程辅助工具，不用于临床诊断。自动检测、质量分数和 Agent 建议都应结合原始数据、实验记录与人工复核解释。
 
 ## License
 
