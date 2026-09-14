@@ -12,6 +12,7 @@ app.whenReady().then(async()=>{
   try{
     await window.loadFile(path.join(__dirname,'../renderer/index.html'));
     const result=await window.webContents.executeJavaScript(`(async()=>{
+      if(!document.querySelector('#task-monitor')||!document.querySelector('#browse-bids')||!document.querySelector('#analysis-products'))throw Error('advanced task/BIDS/analysis panels missing');
       state.backend='demo';
       const original=localStorage.getItem('neuroflow-import-templates');
       try {

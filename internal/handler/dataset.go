@@ -15,6 +15,27 @@ type registerDatasetRequest struct {
 	// Path 由 Electron 主进程的系统文件选择框产生，不是上传后的临时文件名。
 	Path string `json:"path" binding:"required"`
 }
+type bidsBrowseRequest struct {
+	Path string `json:"path" binding:"required"`
+}
+
+func BrowseBIDS() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		var request bidsBrowseRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil {
+			ctx.JSON(400, gin.H{"message": "path 是必填字段"})
+			return
+		}
+		browseCtx, cancel := context.WithTimeout(ctx.Request.Context(), 45*time.Second)
+		defer cancel()
+		result, err := dataset.BrowseBIDS(browseCtx, request.Path)
+		if err != nil {
+			ctx.JSON(422, gin.H{"code": "BIDS_BROWSE_FAILED", "message": err.Error()})
+			return
+		}
+		ctx.JSON(200, result)
+	}
+}
 
 // 试读与确认使用同一个 Python 读取器，不能仅凭客户端声明就清除冲突。
 func ConfirmDatasetStructure() gin.HandlerFunc {

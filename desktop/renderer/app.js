@@ -12,7 +12,8 @@ const templates = {
   ]},
   MEG: { name: 'sub-01_task-rest_meg.fif', channels: '306', rate: '1000', format: 'FIF', unit: 'fT', accept: '.fif,.con,.sqd', labels: ['MEG0111','MEG0121','MEG0131','MEG0141','MEG0211','MEG0221','MEG0231','MEG0241'], steps: [
     ['传感器质量检查','Sensor quality', [['方法','人工复核']]],
-    ['环境噪声抑制','SSS / tSSS', [['方法','tSSS'],['窗口 s','10']]],
+    ['环境噪声抑制','Empty-room SSP', [['方法','空房 SSP']]],
+    ['Maxwell 滤波','SSS / tSSS', [['方法','tSSS'],['窗口 s','10']]],
     ['带通滤波','Band-pass filter', [['低频 Hz','1'],['高频 Hz','40']]],
     ['工频陷波','Notch filter', [['频率 Hz','50']]],
     ['生理伪迹审查','ICA artifact review', [['算法','FastICA'],['成分数','20']]]
@@ -27,7 +28,7 @@ const templates = {
 };
 // key 与 Python/MNE 审计日志中的步骤 ID 一致。只有 executable=true 的步骤
 // 会出现在真实 EEG 请求中；规划中的算法可以展示，但不能伪装成已经接入。
-const stepKeyByName={'带通滤波':'bandpass_filter','工频陷波':'notch_filter','坏道检测':'bad_channel_detection','坏道插值':'bad_channel_interpolation','独立成分分析':'ica_artifact_removal','重参考':'reference_selection','重采样':'resample','事件分段':'epoching','基线校正':'baseline','Epoch 伪迹拒绝':'autoreject','传感器质量检查':'sensor_quality','环境噪声抑制':'maxwell_filter','生理伪迹审查':'physiological_artifacts','光强转光密度':'optical_density','通道质量检查':'channel_quality','运动伪迹校正':'motion_correction','血红蛋白浓度转换':'beer_lambert'};
+const stepKeyByName={'带通滤波':'bandpass_filter','工频陷波':'notch_filter','坏道检测':'bad_channel_detection','坏道插值':'bad_channel_interpolation','独立成分分析':'ica_artifact_removal','重参考':'reference_selection','重采样':'resample','事件分段':'epoching','基线校正':'baseline','Epoch 伪迹拒绝':'autoreject','ERP 分析':'erp','时频分析':'time_frequency','交叉验证解码':'decoding','可复现报告':'report','环境噪声抑制':'environmental_noise','Maxwell 滤波':'maxwell_filter','光强转光密度':'optical_density','运动伪迹校正':'motion_correction','血红蛋白浓度转换':'beer_lambert'};
 const algorithmCatalog={
   EEG:[
     {key:'bad_channel_detection',name:'坏道检测',english:'Bad channel detection',params:[['方法','自动检测']],executable:true},
@@ -39,9 +40,19 @@ const algorithmCatalog={
     {key:'resample',name:'重采样',english:'Resampling',params:[['目标 Hz','250']],executable:true},
     {key:'epoching',name:'事件分段',english:'Epoching',params:[['起点 s','-0.2'],['终点 s','0.8']],executable:true},
     {key:'baseline',name:'基线校正',english:'Baseline correction',params:[['区间','-0.2, 0']],executable:true},
-    {key:'autoreject',name:'Epoch 伪迹拒绝',english:'Epoch rejection',params:[['阈值 μV','0']],executable:true}
+    {key:'autoreject',name:'Epoch 伪迹拒绝',english:'Epoch rejection',params:[['阈值 μV','0']],executable:true},
+    {key:'erp',name:'ERP 分析',english:'ERP analysis',params:[],executable:true},
+    {key:'time_frequency',name:'时频分析',english:'Time-frequency analysis',params:[],executable:true},
+    {key:'decoding',name:'交叉验证解码',english:'Cross-validated decoding',params:[],executable:true},
+    {key:'report',name:'可复现报告',english:'Reproducible report',params:[],executable:true}
   ],
-  MEG:[],fNIRS:[]
+  MEG:[
+    {key:'environmental_noise',name:'环境噪声抑制',english:'Empty-room SSP',params:[['方法','空房 SSP']],executable:true},
+    {key:'maxwell_filter',name:'Maxwell 滤波',english:'SSS / tSSS',params:[['方法','tSSS'],['窗口 s','10']],executable:true},
+    {key:'notch_filter',name:'工频陷波',english:'Notch filter',params:[['频率 Hz','50']],executable:true},
+    {key:'bandpass_filter',name:'带通滤波',english:'Band-pass filter',params:[['低频 Hz','1'],['高频 Hz','40']],executable:true},
+    {key:'report',name:'可复现报告',english:'Reproducible report',params:[],executable:true}
+  ],fNIRS:[]
 };
 const clone = value => JSON.parse(JSON.stringify(value));
 const persistedSession=localStorage.getItem('neuroflow-session-id');
@@ -470,6 +481,11 @@ async function requestAnalysis(){
 	[body.baseline_start,body.baseline_end]=intervalPipelineParameter('基线校正','区间',[-.2,0]);
 	body.epoch_reject_uv=numericPipelineParameter('Epoch 伪迹拒绝','阈值 μV',0);
 	body.enabled_steps=state.steps.filter(step=>step.enabled&&step.executable).map(step=>step.key);
+  } else if(state.mode==='MEG') {
+    body.enabled_steps=state.steps.filter(step=>step.enabled&&step.executable).map(step=>step.key);
+    body.sss_mode=document.querySelector('#meg-sss-mode')?.value||'none';
+    body.st_duration=Number(document.querySelector('#meg-st-duration')?.value)||10;
+    body.empty_room_dataset_id=document.querySelector('#meg-empty-room')?.value||'';
   }
   const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/analyze`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data=await response.json().catch(()=>({message:`HTTP ${response.status}`}));

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import math
 import platform
@@ -20,8 +21,9 @@ from scipy.stats import kurtosis
 from mne.filter import filter_data, notch_filter
 from mne.time_frequency import psd_array_welch
 from structured_data import STRUCTURED_EXTENSIONS, load_structured_raw
-from bids_support import is_bids_path, load_bids_raw
+from bids_support import is_bids_path, load_bids_raw, write_bids_derivative
 from import_review import apply_config, get_config
+from advanced_analysis import analyze_epochs, meg_analysis, optimize_eeg_filter
 
 
 READERS = {
@@ -34,6 +36,12 @@ READERS = {
 
 BANDS = {"delta": (1.0, 4.0), "theta": (4.0, 8.0), "alpha": (8.0, 13.0),
          "beta": (13.0, 30.0), "gamma": (30.0, 45.0)}
+
+
+def emit_progress(step, status, detail="", attempt=1):
+    """Write progress to stderr; stdout remains one final JSON document for Go."""
+    event = {"step": step, "status": status, "detail": str(detail), "attempt": attempt}
+    print("NEUROFLOW_EVENT " + json.dumps(event, ensure_ascii=False), file=sys.stderr, flush=True)
 
 
 def source_hash(path: Path) -> str:
@@ -269,11 +277,13 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
     enabled = enabled_steps or {
         "bad_channel_detection", "bad_channel_interpolation", "notch_filter",
         "bandpass_filter", "reference_selection", "ica_artifact_removal",
-        "resample", "epoching", "baseline", "autoreject",
+        "resample", "epoching", "baseline", "autoreject", "erp",
+        "time_frequency", "decoding", "report",
     }
     def record(step, status, detail, attempt=1):
         entry = {"step": step, "status": status, "detail": detail, "attempt": attempt}
         audit.append(entry); plan.append(entry.copy())
+        emit_progress(step, status, detail, attempt)
 
     nyquist = sfreq / 2
     requested_high = highpass_hz if highpass_hz > 0 else 1.0
@@ -291,6 +301,12 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
         selected_notch, notch_reason = notch_hz, "requested by user"
     record("line_frequency_selection", "completed" if selected_notch else "skipped",
            f"{selected_notch:g} Hz ({notch_reason})" if selected_notch else notch_reason)
+
+    search_trials = []
+    if highpass_hz <= 0 and lowpass_hz <= 0 and "bandpass_filter" in enabled:
+        effective_high, effective_low, search_trials = optimize_eeg_filter(
+            demeaned, sfreq, highpass_hz, lowpass_hz,
+            selected_notch or min(50, nyquist * .8), signal_quality, record)
 
     before_quality = signal_quality(demeaned, sfreq, selected_notch or min(50, nyquist * .8))
     record("quality_assessment_before", "completed", f"score={before_quality['score']}")
@@ -364,15 +380,31 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
         record("bad_channel_interpolation", "skipped", reason)
 
     if selected_notch and "notch_filter" in enabled:
-        working.notch_filter([selected_notch], method="iir", verbose=False)
-        record("notch_filter", "completed", f"{selected_notch:g} Hz IIR")
+        try:
+            working.notch_filter([selected_notch], method="iir", verbose=False)
+            record("notch_filter", "completed", f"{selected_notch:g} Hz IIR")
+        except Exception as error:
+            # A failed optional notch must not discard successful earlier steps.
+            record("notch_filter", "degraded", f"attempt 1 failed; continued without notch: {error}", 2)
     elif "notch_filter" not in enabled:
         record("notch_filter", "skipped", "disabled by pipeline")
     else:
         record("notch_filter", "skipped", "no valid line-frequency peak selected")
     if "bandpass_filter" in enabled:
-        working.filter(effective_high, effective_low, method="iir", verbose=False)
-        record("bandpass_filter", "completed", f"{effective_high:g}-{effective_low:g} Hz IIR")
+        checkpoint = working.copy()
+        try:
+            working.filter(effective_high, effective_low, method="iir", verbose=False)
+            record("bandpass_filter", "completed", f"{effective_high:g}-{effective_low:g} Hz IIR")
+        except Exception as error:
+            # One deterministic fallback uses a lower-order Butterworth filter.
+            working = checkpoint
+            try:
+                working.filter(effective_high, effective_low, method="iir",
+                               iir_params={"order": 2, "ftype": "butter"}, verbose=False)
+                record("bandpass_filter", "completed", f"retry after {error}; order-2 Butterworth", 2)
+            except Exception as retry_error:
+                working = checkpoint
+                record("bandpass_filter", "degraded", f"both attempts failed; retained unfiltered checkpoint: {retry_error}", 2)
     else:
         record("bandpass_filter", "skipped", "disabled by pipeline")
 
@@ -440,7 +472,7 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
     processed_sfreq = float(working.info["sfreq"])
     epochs = None
     epoch_report = {"performed": False, "event_count": 0, "retained_epochs": 0}
-    needs_epochs = bool({"epoching", "baseline", "autoreject"}.intersection(enabled))
+    needs_epochs = bool({"epoching", "baseline", "autoreject", "erp", "time_frequency", "decoding"}.intersection(enabled))
     if needs_epochs:
         # 基线或 Epoch 拒绝本身不能脱离 Epochs 工作；用户只启用下游步骤时自动补上
         # event segmentation，并在审计记录中留下依赖激活说明。
@@ -510,6 +542,8 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
         reason = "disabled by pipeline" if "autoreject" not in enabled else "no usable epochs"
         record("autoreject", "skipped", reason)
 
+    analysis_products = analyze_epochs(epochs, enabled, record)
+
     processed = working.get_data()
     after_quality = signal_quality(processed, processed_sfreq,
                                    selected_notch or min(50, processed_sfreq * .4))
@@ -525,11 +559,17 @@ def eeg_auto_analysis(raw, start: int, stop: int, sfreq: float, profile: str,
         "preprocessing": {"dc_removed": True, "notch_hz": selected_notch or None,
                           "bandpass_hz": [effective_high, effective_low], "reference": reference,
                           "bad_channel_interpolation": interpolation, "ica": ica_report,
+                          "parameter_search": search_trials,
                           "resample": {"input_hz": original_sfreq, "output_hz": processed_sfreq},
                           "epochs": epoch_report},
         "quality_comparison": {"before": before_quality, "after": after_quality,
                                "score_change": finite(delta), "improved": delta >= 0},
         "execution_plan": plan,
+        "analysis_products": analysis_products,
+        "retry_policy": {"maximum_attempts_per_recoverable_step": 2,
+                         "parameter_candidates": len(search_trials),
+                         "selection": "fixed candidate grid; highest quality-minus-distortion objective",
+                         "non_retryable": ["invalid event semantics", "invalid units", "invalid time bounds"]},
         "audit_log": audit,
         "warnings": [entry["detail"] for entry in audit if entry["status"] == "degraded"],
     })
@@ -615,7 +655,7 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("source")
-    parser.add_argument("modality", choices=["EEG", "fNIRS"])
+    parser.add_argument("modality", choices=["EEG", "MEG", "fNIRS"])
     parser.add_argument("profile", choices=["summary", "quality", "full"])
     parser.add_argument("--start", type=float, default=0.0)
     parser.add_argument("--end", type=float, default=0.0)
@@ -634,13 +674,16 @@ def main() -> int:
     parser.add_argument("--epoch-reject-uv", type=float, default=0.0,
                         help="0 derives a robust threshold from epoch peak-to-peak amplitudes")
     parser.add_argument("--steps", help="comma-separated executable EEG pipeline step IDs")
+    parser.add_argument("--sss-mode", choices=["none", "sss", "tsss"], default="none")
+    parser.add_argument("--st-duration", type=float, default=10.0)
+    parser.add_argument("--empty-room", help="optional validated empty-room MEG recording")
     parser.add_argument("--output", help="optional path for the processed FIF file")
     args = parser.parse_args()
     try:
         raw = apply_config(load_raw(Path(args.source).resolve()), Path(args.source).resolve())
         start, stop, sfreq = select_range(raw, args.start, args.end)
+        selected_steps = {item.strip() for item in (args.steps or "").split(",") if item.strip()} or None
         if args.modality == "EEG":
-            selected_steps = {item.strip() for item in (args.steps or "").split(",") if item.strip()} or None
             result, raw_data, processed_data, processed_info, processed_sfreq, processed_epochs = eeg_auto_analysis(
                 raw, start, stop, sfreq, args.profile, args.left_channel,
                 args.right_channel, args.highpass_hz, args.lowpass_hz, args.notch_hz,
@@ -651,6 +694,33 @@ def main() -> int:
                 "processed": build_preview(processed_data * 1e6, result["channel_names"], processed_sfreq, "µV"),
             }
             processed_raw = mne.io.RawArray(processed_data, processed_info, verbose=False)
+            # Preserve event annotations in saved FIF/BIDS derivatives. They were
+            # used for Epochs but RawArray itself does not inherit them.
+            window_start, window_end = start / sfreq, stop / sfreq
+            kept = [(max(0.0, float(onset)-window_start), float(duration), str(description))
+                    for onset, duration, description in zip(raw.annotations.onset,
+                    raw.annotations.duration, raw.annotations.description)
+                    if onset + duration >= window_start and onset < window_end]
+            if kept:
+                processed_raw.set_annotations(mne.Annotations(
+                    [v[0] for v in kept], [v[1] for v in kept], [v[2] for v in kept]))
+        elif args.modality == "MEG":
+            meg_events = []
+            def meg_record(step, status, detail, attempt=1):
+                entry = {"step": step, "status": status, "detail": detail, "attempt": attempt}
+                meg_events.append(entry); emit_progress(step, status, detail, attempt)
+            meg_steps = selected_steps or {"environmental_noise", "maxwell_filter", "notch_filter", "bandpass_filter", "report"}
+            empty_room = load_raw(Path(args.empty_room).resolve()) if args.empty_room else None
+            result, raw_data, processed_data, processed_info, processed_sfreq, processed_raw = meg_analysis(
+                raw, start, stop, args.profile, meg_steps, args.sss_mode,
+                args.st_duration, empty_room=empty_room, record=meg_record)
+            result["execution_plan"] = meg_events
+            result["audit_log"] = meg_events
+            preview = {
+                "raw": build_preview(raw_data, result["channel_names"], sfreq, "SI"),
+                "processed": build_preview(processed_data, result["channel_names"], processed_sfreq, "SI"),
+            }
+            processed_epochs = None
         else:
             result, raw_segment, processed_raw = fnirs_analysis(raw, start, stop, sfreq, args.profile)
             preview_picks = mne.pick_types(processed_raw.info, eeg=False, meg=False,
@@ -693,9 +763,10 @@ def main() -> int:
                 "import_configuration": get_config(Path(args.source).resolve()),
             },
         }
-        if args.output and args.modality == "EEG":
+        if args.output:
             # 审计报告与 FIF 同目录保存，包含参数、每步状态、降级原因和质量比较；
             # preview 数组不写入报告，避免报告文件被波形数据撑大。
+            emit_progress("report", "started", "Generating JSON and HTML reproducibility reports")
             report_path = Path(args.output).resolve().with_suffix(".audit.json")
             report_payload = {key: value for key, value in payload.items() if key != "preview"}
             report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2,
@@ -706,17 +777,24 @@ def main() -> int:
             comparison = result.get("quality_comparison", {})
             before = comparison.get("before", {}).get("score", "-")
             after = comparison.get("after", {}).get("score", "-")
-            rows = "".join(f"<tr><td>{item.get('step')}</td><td>{item.get('status')}</td><td>{item.get('detail','')}</td></tr>" for item in result.get("audit_log", []))
+            rows = "".join(f"<tr><td>{html.escape(str(item.get('step','')))}</td><td>{html.escape(str(item.get('status','')))}</td><td>{html.escape(str(item.get('detail','')))}</td></tr>" for item in result.get("audit_log", []))
+            product_json = html.escape(json.dumps(result.get("analysis_products", {}), ensure_ascii=False, indent=2, default=json_default))
+            parameter_json = html.escape(json.dumps(payload["provenance"]["command_parameters"], ensure_ascii=False, indent=2, default=json_default))
             html_path = report_path.with_suffix(".html")
-            html_path.write_text(f"<!doctype html><meta charset='utf-8'><title>NeuroFlow audit</title><style>body{{font:14px Segoe UI;max-width:960px;margin:40px auto;color:#29483d}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border:1px solid #dce8e2;text-align:left}}</style><h1>NeuroFlow preprocessing audit</h1><p>Quality score: {before} → {after}</p><p>Input SHA-256: {payload['provenance']['source_sha256']}</p><table><tr><th>Step</th><th>Status</th><th>Detail</th></tr>{rows}</table>", encoding="utf-8")
+            html_path.write_text(f"<!doctype html><meta charset='utf-8'><title>NeuroFlow report</title><style>body{{font:14px Segoe UI;max-width:960px;margin:40px auto;color:#29483d}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border:1px solid #dce8e2;text-align:left}}pre{{white-space:pre-wrap;background:#f3f7f5;padding:12px}}</style><h1>NeuroFlow reproducible analysis report</h1><p>Modality: {args.modality} · Quality score: {before} → {after}</p><p>Input SHA-256: {payload['provenance']['source_sha256']}</p><p>Python {platform.python_version()} · MNE {mne.__version__} · NumPy {np.__version__} · random seed 97</p><h2>Execution audit</h2><table><tr><th>Step</th><th>Status</th><th>Detail</th></tr>{rows}</table><h2>Analysis products</h2><pre>{product_json}</pre><h2>Command parameters</h2><pre>{parameter_json}</pre>", encoding="utf-8")
             output["audit_html_file_name"] = html_path.name
-            if is_bids_path(Path(args.source).resolve()):
-                derivative_description = output_path.parent / "dataset_description.json"
-                derivative_description.write_text(json.dumps({"Name": "NeuroFlow derivatives", "BIDSVersion": "1.10.0", "DatasetType": "derivative", "GeneratedBy": [{"Name": "NeuroFlow", "Version": "0.1", "Description": "MNE preprocessing with auditable parameters"}]}, indent=2), encoding="utf-8")
-                output["bids_derivative"] = True
+            if is_bids_path(Path(args.source).resolve()) and args.modality in {"EEG", "MEG"}:
+                try:
+                    output["bids_derivative"] = write_bids_derivative(
+                        processed_raw, Path(args.source).resolve(), output_path.parent)
+                    emit_progress("bids_derivative", "completed", output["bids_derivative"]["relative_recording"])
+                except Exception as error:
+                    output["bids_derivative"] = {"written": False, "reason": str(error)}
+                    emit_progress("bids_derivative", "degraded", str(error), 2)
             report_payload = {key: value for key, value in payload.items() if key != "preview"}
             report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2,
                                               allow_nan=False, default=json_default), encoding="utf-8")
+            emit_progress("report", "completed", f"Created {report_path.name} and {html_path.name}")
         print(json.dumps(payload, ensure_ascii=False, allow_nan=False, default=json_default))
         return 0
     except Exception as error:

@@ -53,11 +53,14 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	// 数据集接口与普通知识库上传分开：这里读取的是神经信号元数据，
 	// 不会把二进制波形当作文档切片写入向量数据库。
 	r.POST("/datasets/register", handler.RegisterDataset())
+	r.POST("/bids/browse", handler.BrowseBIDS())
 	r.GET("/datasets/:id", handler.GetDataset())
 	r.PUT("/datasets/:id/structure", handler.ConfirmDatasetStructure())
 	r.GET("/datasets/:id/preview", handler.PreviewDataset())
 	r.GET("/datasets/:id/signal", handler.SignalWindow())
 	r.GET("/datasets/:id/analysis/latest", handler.LatestDatasetAnalysis())
+	r.GET("/datasets/:id/analysis/events", handler.AnalysisEvents())
+	r.GET("/datasets/:id/derivatives", handler.DatasetDerivatives())
 	r.POST("/datasets/:id/analyze", handler.AnalyzeDataset())
 	//运维
 	planer := plan.NewPlanServer(*config, model, loger, retriever)

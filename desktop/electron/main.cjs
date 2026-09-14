@@ -38,6 +38,12 @@ app.whenReady().then(() => {
     });
     return result.canceled ? [] : result.filePaths;
   });
+  ipcMain.handle('neuro:select-bids-root', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择 BIDS 数据集根目录', properties: ['openDirectory']
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
   // 只允许定位项目 outputs 目录内由分析器生成的结果，拒绝任意绝对路径和目录穿越。
   ipcMain.handle('neuro:show-output', async (_event, relativePath) => {
     const projectRoot = path.resolve(__dirname, '..', '..');

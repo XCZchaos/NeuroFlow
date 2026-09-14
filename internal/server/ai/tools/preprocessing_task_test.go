@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"OnCallAgent/internal/server/analysisprogress"
 	"OnCallAgent/internal/server/dataset"
 	"OnCallAgent/internal/server/taskstate"
 	_ "modernc.org/sqlite"
@@ -97,6 +98,11 @@ func TestTaskAnswersValidateResumeWithRealMNE(t *testing.T) {
 	}
 	if state.Status != "completed" || len(state.Result) == 0 {
 		t.Fatalf("execution failed: %+v", state)
+	}
+	_, events, stop := analysisprogress.Subscribe(record.ID, 0)
+	stop()
+	if len(events) < 2 || events[len(events)-1].Status != "completed" {
+		t.Fatalf("missing real progress events: %+v", events)
 	}
 	if _, err = manageTask(ctx, TaskInput{Action: "resume", Revision: revision}); err == nil {
 		t.Fatal("duplicate execution accepted")

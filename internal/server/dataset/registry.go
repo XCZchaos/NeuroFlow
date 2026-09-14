@@ -234,3 +234,28 @@ func datasetScriptPath(name string) (string, error) {
 	}
 	return "", fmt.Errorf("找不到 neuro_service/%s", name)
 }
+
+// BrowseBIDS enumerates recordings and entities without loading sample arrays.
+func BrowseBIDS(ctx context.Context, root string) (map[string]any, error) {
+	script, err := datasetScriptPath("bids_catalog.py")
+	if err != nil {
+		return nil, err
+	}
+	abs, err := filepath.Abs(strings.TrimSpace(root))
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "python", script, abs)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	var result map[string]any
+	if err = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &result); err != nil {
+		return nil, fmt.Errorf("BIDS catalog returned invalid JSON: %w (%s)", err, stderr.String())
+	}
+	if runErr != nil || result["ok"] != true {
+		return nil, fmt.Errorf("BIDS browse failed: %v", result["message"])
+	}
+	return result, nil
+}

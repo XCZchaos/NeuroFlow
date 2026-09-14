@@ -4,5 +4,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', Object.freeze({
   platform: process.platform,
   selectFiles: () => ipcRenderer.invoke('neuro:select-files'),
+  selectBIDSRoot: () => ipcRenderer.invoke('neuro:select-bids-root'),
   showOutput: relativePath => ipcRenderer.invoke('neuro:show-output', relativePath)
 }));
