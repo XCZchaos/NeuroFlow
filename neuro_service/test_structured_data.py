@@ -39,6 +39,38 @@ class StructuredDataTest(unittest.TestCase):
             self.assertEqual(raw.get_data().shape, (2, 500))
             self.assertEqual(report["selected_array"], "data")
 
+    def test_multisection_csv_separates_interleaved_eeg_stream(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "wearable.csv"
+            rows = [
+                "ID,DEVICE TYPE,EEG CHANNELS,EEG SAMPLING RATE,FNIRS CHANNELS,EEG EFFECTIVE SAMPLING RATE",
+                "1,BioMulti Lite,2,250,8,256.64",
+                "TIMESTAMP,EEG.PKN,EEG.FP1,EEG.FP2,FNIRS.S1D1.735,ACCEL.X,MARKER,IS_LOSS",
+                "1788191606340,13,10,20,,,,0",
+                "1788191606342,,,,100,1,,0",
+                "1788191606344,13,11,21,,,,0",
+                "1788191606348,13,12,22,,,left,0",
+            ]
+            path.write_text("\n".join(rows), encoding="utf-8")
+            raw, report = load_structured_raw(path)
+            self.assertEqual(raw.ch_names, ["Fp1", "Fp2"])
+            self.assertEqual(raw.get_data().shape, (2, 3))
+            self.assertAlmostEqual(raw.info["sfreq"], 250)
+            self.assertEqual(report["adapter"], "multisection_csv")
+            self.assertEqual(report["detected_streams"], ["EEG", "fNIRS", "motion"])
+            self.assertEqual(report["selected_stream"], "EEG")
+            self.assertEqual(report["event_dictionary"], ["event/left"])
+
+    def test_large_unlabelled_values_offer_nanovolt_preview_for_confirmation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "device.csv"
+            path.write_text("time,Fp1,Fp2\n0,374000,18000\n0.004,250000,80000\n", encoding="utf-8")
+            raw, report = load_structured_raw(path)
+            self.assertEqual(report["unit"], "nV")
+            self.assertLess(report["unit_confidence"], .5)
+            self.assertTrue(report["requires_confirmation"])
+            self.assertAlmostEqual(raw.get_data()[0, 0], 374000e-9)
+
     def test_binary_requires_and_uses_explicit_sidecar(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "recording.bin"

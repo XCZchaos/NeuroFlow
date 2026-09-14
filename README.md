@@ -36,6 +36,7 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的智能代理系统�
 - **可验证的操作反馈** - 对处理请求显示执行阶段，并通过新的 `analysis_id` 校验是否真正完成
 - **可选结果保存** - 用户可以保存 FIF 与审计文件，或者只在内存中完成分析
 - **中英文界面** - Electron 工作台和动态交互文案支持中文与英文切换
+- **应用内使用说明** - 左侧“使用说明”提供可搜索、可离线查看的中英文操作手册和故障排查入口
 - **预处理草案** - 为 EEG、MEG 或 fNIRS 生成带假设、参数和人工复核提示的结构化流程
 - **知识库管理** - Markdown 文档自动解析、向量化并存入 Qdrant
 - **Markdown 回复** - Electron 安全显示标题、列表、表格、引用与代码块
@@ -235,6 +236,20 @@ BrainVision 数据需要保留配套的 `.vmrk` 和 `.eeg` 文件；外部存储
 | `embedder.*` | Ollama Embedding 服务配置 |
 | `qdrant.*` | Qdrant 向量数据库配置 |
 | `openai.*` | 兼容 OpenAI 格式的 LLM API 配置 |
+
+### Electron 打包版模型配置
+
+打包给其他用户时不需要附带 `config/config.json` 或开发者的 API Key。用户可在 Electron“连接设置”中填写 API Base、模型名称、API Key 和最大输出 token，也可以导入包含 `openai` 对象的项目配置 JSON 或只包含模型字段的 JSON。导入文件只读取一次，API Key 随即由 Electron `safeStorage` 使用操作系统凭据保护机制加密并保存到 Electron 的 `userData` 目录；渲染页面只能读取“是否已经配置”，不能取回密钥明文。
+
+打包产物可以在 resources 中携带 `backend/neuroflow-backend.exe` 和不含密钥的 `config/config_template.json`。Electron 检测到这两个文件且用户已经保存模型配置后，会自动启动或重启 Go 后端，并通过仅属于该子进程的环境变量注入模型配置：
+
+- `NEUROFLOW_LLM_API_KEY`
+- `NEUROFLOW_LLM_API_BASE`
+- `NEUROFLOW_LLM_MODEL`
+- `NEUROFLOW_LLM_MAX_TOKENS`
+- `NEUROFLOW_CONFIG_FILE`
+
+开发模式仍可使用 `config/config.json`。如果在 Electron 中修改模型设置，而后端是从外部终端用 `go run ./cmd` 启动的，需要重启这个开发后端；Electron 只会自动管理随安装包携带的后端进程。
 
 ## API 文档
 

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -82,6 +83,16 @@ func InitConfig(configFile string) (*Config, error) {
 
 	// 设置默认值
 	setDefaults(v)
+	// Packaged Electron builds pass model secrets through the child-process
+	// environment. This keeps API keys out of the repository and config files.
+	for key, environment := range map[string]string{
+		"openai.api_key": "NEUROFLOW_LLM_API_KEY", "openai.api_base": "NEUROFLOW_LLM_API_BASE",
+		"openai.model": "NEUROFLOW_LLM_MODEL", "openai.max_tokens": "NEUROFLOW_LLM_MAX_TOKENS",
+	} {
+		if value := strings.TrimSpace(os.Getenv(environment)); value != "" {
+			v.Set(key, value)
+		}
+	}
 
 	var cfg Config
 	if err := v.Unmarshal(&cfg); err != nil {

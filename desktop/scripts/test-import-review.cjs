@@ -12,7 +12,8 @@ app.whenReady().then(async()=>{
   try{
     await window.loadFile(path.join(__dirname,'../renderer/index.html'));
     const result=await window.webContents.executeJavaScript(`(async()=>{
-      if(!document.querySelector('#task-monitor')||!document.querySelector('#browse-bids')||!document.querySelector('#analysis-products'))throw Error('advanced task/BIDS/analysis panels missing');
+      if(!document.querySelector('#task-monitor')||!document.querySelector('#browse-bids')||!document.querySelector('#analysis-products')||!document.querySelector('#import-progress')||!document.querySelector('#model-api-key')||!document.querySelector('#help-view')||document.querySelectorAll('#help-view article').length<8)throw Error('advanced task/BIDS/analysis/import/model/help panels missing');
+      document.querySelector('[data-view="help"]').click();if(document.querySelector('#help-view').hidden||!document.querySelector('#workspace-view').hidden)throw Error('help navigation failed');document.querySelector('[data-view="workspace"]').click();
       state.backend='demo';
       const original=localStorage.getItem('neuroflow-import-templates');
       try {

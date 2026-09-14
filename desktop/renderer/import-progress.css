@@ -1,0 +1,10 @@
+.import-progress{display:flex;align-items:center;gap:11px;margin:14px 0 2px;padding:11px 12px;border:1px solid #dcebe4;border-radius:7px;background:#f4faf7;color:#367862}
+.import-progress strong{display:block;font-size:10px}
+.import-progress small{display:block;margin-top:4px;color:#779188;font-size:9px}
+.import-progress.failed{background:#fff5f2;border-color:#efd8d0;color:#98533f}
+.import-progress.complete{background:#f2f8f4;color:#397762}
+.import-spinner{width:15px;height:15px;border:2px solid #bedbd0;border-top-color:#16846d;border-radius:50%;animation:import-spin .8s linear infinite;flex:none}
+.import-progress.failed .import-spinner,.import-progress.complete .import-spinner{animation:none;border:0;display:grid;place-items:center}
+.import-progress.failed .import-spinner:before{content:'!';font-weight:700}
+.import-progress.complete .import-spinner:before{content:'✓';font-weight:700}
+@keyframes import-spin{to{transform:rotate(360deg)}}

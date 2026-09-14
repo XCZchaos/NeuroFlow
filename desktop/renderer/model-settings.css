@@ -1,0 +1,5 @@
+.model-settings-fields{border:1px solid var(--border);border-radius:8px;margin:16px 0;padding:5px 14px 14px}
+.model-settings-fields legend{padding:0 7px;color:var(--green);font-size:10px;font-weight:700}
+.model-settings-fields input{display:block;width:100%;margin-top:7px;padding:9px;border:1px solid #dfe7e0;border-radius:6px;color:#405e50;background:#fff}
+.model-settings-fields .field-label{margin-top:11px}
+.model-settings-fields .settings-note{margin:12px 0 0}

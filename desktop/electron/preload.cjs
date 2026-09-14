@@ -5,5 +5,8 @@ contextBridge.exposeInMainWorld('desktop', Object.freeze({
   platform: process.platform,
   selectFiles: () => ipcRenderer.invoke('neuro:select-files'),
   selectBIDSRoot: () => ipcRenderer.invoke('neuro:select-bids-root'),
+  loadModelConfig: () => ipcRenderer.invoke('neuro:model-config-load'),
+  saveModelConfig: value => ipcRenderer.invoke('neuro:model-config-save', value),
+  importModelConfig: () => ipcRenderer.invoke('neuro:model-config-import'),
   showOutput: relativePath => ipcRenderer.invoke('neuro:show-output', relativePath)
 }));

@@ -57,11 +57,33 @@ const algorithmCatalog={
 const clone = value => JSON.parse(JSON.stringify(value));
 const persistedSession=localStorage.getItem('neuroflow-session-id');
 const persistedResponseMode=localStorage.getItem('neuroflow-response-mode')==='deep'?'deep':'quick';
-const state = { mode:'EEG', responseMode:persistedResponseMode, steps:[], datasets:[], current:null, history:[], sessions:[], running:false, sending:false, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:persistedSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
+const state = { mode:'EEG', responseMode:persistedResponseMode, steps:[], datasets:[], current:null, history:[], sessions:[], running:false, sending:false, importStatus:null, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:persistedSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
 localStorage.setItem('neuroflow-session-id',state.session);
 let toastTimer;
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').hidden = true, 4000); }
 function element(tag, className, text) { const node = document.createElement(tag); if(className) node.className=className; if(text !== undefined) node.textContent=text; return node; }
+function importText(key){
+  const values={
+    reading:['正在读取文件','Reading file','已获得本地文件路径，准备交给解析服务','Local path received; preparing the inspection service'],
+    parsing:['正在解析数据结构','Parsing data structure','正在识别表头、数据流、通道、采样率和单位','Detecting headers, streams, channels, sampling rate, and units'],
+    preview:['正在读取真实信号预览','Reading real signal preview','元数据解析完成，正在读取首个信号窗口','Metadata is ready; loading the first signal window'],
+    confirm:['解析完成，等待结构确认','Parsed · Confirmation required','请核对采样率、单位、通道和解析警告后再执行','Review sampling rate, unit, channels, and warnings before execution'],
+    complete:['数据解析完成','Data parsing complete','真实元数据和信号预览已经可用','Real metadata and signal preview are available'],
+    failed:['数据解析失败','Data parsing failed','解析阶段失败','Parsing stage failed']
+  };const value=values[key]||values.parsing,offset=i18n.getLocale()==='en'?1:0;return {title:value[offset],detail:value[offset+2]};
+}
+function ensureImportProgress(){
+  let panel=$('#import-progress');if(panel)return panel;
+  panel=element('div','import-progress');panel.id='import-progress';panel.hidden=true;panel.setAttribute('role','status');panel.setAttribute('aria-live','polite');
+  const copy=element('div');copy.append(element('strong',''),element('small',''));panel.append(element('span','import-spinner'),copy);$('#dropzone .dataset-body').after(panel);return panel;
+}
+function setImportStatus(stage,status='running',error=''){state.importStatus={stage,status,error};renderImportStatus();}
+function renderImportStatus(){
+  const panel=ensureImportProgress(),current=state.importStatus;panel.hidden=!current;if(!current)return;
+  const display=current.status==='failed'?'failed':current.status==='confirm'?'confirm':current.status==='complete'?'complete':current.stage;
+  const copy=importText(display);panel.classList.toggle('failed',current.status==='failed');panel.classList.toggle('complete',current.status==='complete'||current.status==='confirm');
+  panel.querySelector('strong').textContent=copy.title;panel.querySelector('small').textContent=current.status==='failed'?`${copy.detail}: ${current.error}`:copy.detail;
+}
 function setMode(mode) {
   if(state.running || state.sending) return toast(t('toast.waitSwitch'));
   state.mode=mode; state.steps=templates[mode].steps.map(([name,english,params]) => ({key:stepKeyByName[name]||name,name,english,params:clone(params),enabled:true,executable:mode==='EEG'}));
@@ -97,6 +119,7 @@ function renderDataset() {
   renderStructureReview(meta);
   renderChannelLayout();
   renderQuality();
+  renderImportStatus();
 }
 
 function renderQuality(){
@@ -162,15 +185,20 @@ async function importPaths(paths) {
   if(state.backend!=='backend')return toast(t('toast.connectBackend'));
   let accepted=0; const failures=[],previewFailures=[];
   for(const path of paths) {
+    const displayName=String(path).split(/[\\/]/).pop()||String(path);
+    state.current={name:displayName,size:0,modified:0,mode:state.mode,path};setImportStatus('reading');renderDataset();
     try {
+      setImportStatus('parsing');
       const record=await registerPath(path), meta=record.inspection;
       // inspection 是 Python/MNE 已验证的数据；后面的界面和对话统一读取它。
       const item={name:meta.source_name,size:meta.source_size_bytes||0,modified:0,mode:meta.modality,datasetId:record.dataset_id,inspection:meta,path};
       state.datasets.push(item); accepted++;
       if(templates[meta.modality]&&state.mode!==meta.modality)setMode(meta.modality);
       state.current=item;state.analysis=null;state.processed=false;state.selectedChannel=null;state.singleChannel=false;state.signalWindow={start:0,duration:10,preview:null,loading:false};
+      setImportStatus('preview');renderDataset();
       try{item.preview=await loadRawPreview(item.datasetId);}catch(error){previewFailures.push(`${item.name}: ${error.message}`);}
-    } catch(error) { failures.push(error.message); }
+      setImportStatus('complete',meta.structure_report?.requires_confirmation?'confirm':'complete');
+    } catch(error) { failures.push(error.message);setImportStatus(state.importStatus?.stage||'parsing','failed',error.message); }
   }
   renderDataset();renderLists();drawSignal();
   toast(accepted?`${t('toast.imported',{count:accepted})}${previewFailures.length?t('toast.previewFailed',{count:previewFailures.length}):''}${failures.length?t('toast.failedCount',{count:failures.length}):''}`:t('toast.readFailed',{error:failures[0]||(i18n.getLocale()==='en'?'Unknown error':'未知错误')}));
@@ -197,7 +225,7 @@ function renderLists() {
   [...state.history].reverse().forEach(run=>{const row=element('div','list-row'),details=element('div'),comparison=run.result?.quality_comparison,degraded=run.result?.audit_log?.filter(item=>item.status==='degraded').length||0;const quality=comparison?t('history.quality',{before:Number(comparison.before.score).toFixed(1),after:Number(comparison.after.score).toFixed(1),degraded}):'';details.append(element('strong','',t(run.real?'history.realComplete':'history.complete',{mode:run.mode,count:run.steps.length})),element('p','',`${run.time} · ${run.real?`${quality} · ${run.output?.file_name||t('history.processed')}`:t('history.noProcessing')}`));const button=element('button','button light',run.real&&run.output?.relative_path?t('action.locate'):t('action.export'));button.addEventListener('click',()=>run.real&&run.output?.relative_path&&globalThis.desktop?.showOutput?globalThis.desktop.showOutput(run.output.relative_path).catch(error=>toast(error.message)):download(run,`neuroflow-${run.mode}-run.json`));row.append(details,button);history.append(row);});
 	const sessions=$('#session-list');if(sessions){sessions.replaceChildren();if(!state.sessions.length)sessions.append(element('p','empty',t('session.empty')));state.sessions.forEach(item=>{const row=element('div',`list-row session-row${item.id===state.session?' current':''}`),details=element('div');details.append(element('strong','',item.title||t('session.untitled')),element('p','',`${item.dataset_id||t('session.noDataset')} · ${new Date(item.updated_at).toLocaleString()}`));const actions=element('div','session-actions'),open=element('button','button light',item.id===state.session?t('session.current'):t('session.open')),remove=element('button','button danger',t('session.delete'));open.disabled=item.id===state.session;open.addEventListener('click',()=>openSession(item.id));remove.addEventListener('click',()=>deleteSession(item.id));actions.append(open,remove);row.append(details,actions);sessions.append(row);});}
 }
-function setView(view) { for(const name of ['workspace','datasets','history','sessions'])$(`#${name}-view`).hidden=name!==view;$$('.nav-item[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));const keys={workspace:'nav.preprocessing',datasets:'nav.datasets',history:'nav.history',sessions:'nav.sessions'};$('#breadcrumb').textContent=t(keys[view]);$('#page-title').textContent=view==='workspace'?t('view.title'):t(keys[view]);renderLists();if(view==='workspace')requestAnimationFrame(drawSignal); }
+function setView(view) { for(const name of ['workspace','datasets','history','sessions','help'])$(`#${name}-view`).hidden=name!==view;$$('.nav-item[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));const keys={workspace:'nav.preprocessing',datasets:'nav.datasets',history:'nav.history',sessions:'nav.sessions',help:'nav.help'};const label=view==='help'?(i18n.getLocale()==='en'?'User guide':'使用说明'):t(keys[view]);$('#breadcrumb').textContent=label;$('#page-title').textContent=view==='workspace'?t('view.title'):label;$('#import-top').hidden=view==='help';renderLists();if(view==='workspace')requestAnimationFrame(drawSignal); }
 
 async function memoryRequest(path,options={}){const response=await fetch(`${state.url}${path}`,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});const data=response.status===204?null:await response.json().catch(()=>({message:`HTTP ${response.status}`}));if(!response.ok)throw new Error(data?.message||`HTTP ${response.status}`);return data;}
 async function ensureSession(){if(state.backend!=='backend')return;await memoryRequest('/sessions',{method:'POST',body:JSON.stringify({id:state.session,title:t('session.untitled')})});await loadSessions();}
@@ -593,7 +621,7 @@ $('#signal-zoom-out').addEventListener('click',()=>zoomSignalWindow(2));
 $('#chat-form').addEventListener('submit',event=>{event.preventDefault();if(state.sending){state.streamController?.abort();return;}sendMessage($('#chat-input').value);});
 $('#chat-input').addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();sendMessage(event.target.value);}});
 $$('[data-prompt]').forEach(button=>button.addEventListener('click',()=>sendMessage(button.dataset.i18n?t(button.dataset.i18n):button.dataset.prompt)));
-$$('.settings-trigger').forEach(button=>button.addEventListener('click',()=>{$('#backend-mode').value=state.backend;$('#backend-url').value=state.url;$('#settings-dialog').showModal();}));
+$$('.settings-trigger').forEach(button=>button.addEventListener('click',async()=>{$('#backend-mode').value=state.backend;$('#backend-url').value=state.url;$('#settings-dialog').showModal();await globalThis.NeuroModelSettings?.load();}));
 $('#close-settings').addEventListener('click',()=>$('#settings-dialog').close());
 async function checkBackend(){
   if(state.backend==='demo'){setConnectionState('demo',t('status.demo'));return;}
@@ -602,7 +630,7 @@ async function checkBackend(){
   catch{setConnectionState('offline',t('status.offline'));}
 }
 function setConnectionState(status,label){$('#connection-status').textContent=label;$('#backend-dot').dataset.status=status;}
-$('#settings-form').addEventListener('submit',async event=>{event.preventDefault();if(state.sending)return toast(t('toast.wait'));state.backend=$('#backend-mode').value;state.url=$('#backend-url').value;localStorage.setItem('neuroflow-connection',JSON.stringify({backend:state.backend,url:state.url}));$('#agent-mode').textContent=state.backend==='demo'?t('agent.demo'):t('agent.backend');$('#settings-dialog').close();await checkBackend();toast(t('toast.saved'));});
+$('#settings-form').addEventListener('submit',async event=>{event.preventDefault();if(state.sending)return toast(t('toast.wait'));const selectedBackend=$('#backend-mode').value;if(selectedBackend==='backend'){try{await globalThis.NeuroModelSettings?.save();}catch(error){return toast(error.message);}}state.backend=selectedBackend;state.url=$('#backend-url').value;localStorage.setItem('neuroflow-connection',JSON.stringify({backend:state.backend,url:state.url}));$('#agent-mode').textContent=state.backend==='demo'?t('agent.demo'):t('agent.backend');$('#settings-dialog').close();await checkBackend();toast(t('toast.saved'));});
 $('#new-session').addEventListener('click',()=>createSession().catch(error=>toast(error.message)));
 
 // 深浅主题和侧栏状态保存在本机，重启 Electron 后仍保持用户选择。

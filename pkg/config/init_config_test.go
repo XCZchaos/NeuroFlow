@@ -73,6 +73,26 @@ func TestInitConfigFromFileNotFound(t *testing.T) {
 	}
 }
 
+func TestModelEnvironmentOverridesSensitiveFileValues(t *testing.T) {
+	t.Setenv("NEUROFLOW_LLM_API_KEY", "runtime-secret")
+	t.Setenv("NEUROFLOW_LLM_API_BASE", "https://example.test/v1")
+	t.Setenv("NEUROFLOW_LLM_MODEL", "example-model")
+	t.Setenv("NEUROFLOW_LLM_MAX_TOKENS", "2048")
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.json")
+	if err := os.WriteFile(configFile, []byte(`{"openai":{"api_key":"file-secret"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := InitConfig(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OpenAI.APIKey != "runtime-secret" || cfg.OpenAI.APIBase != "https://example.test/v1" ||
+		cfg.OpenAI.Model != "example-model" || cfg.OpenAI.MaxTokens != 2048 {
+		t.Fatalf("environment overrides were not applied: %+v", cfg.OpenAI)
+	}
+}
+
 func TestGetServerAddr(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{Host: "localhost", Port: 8080},

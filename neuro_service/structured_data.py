@@ -22,6 +22,126 @@ EVENT_NAMES = {"event", "events", "trigger", "triggers", "marker", "markers", "s
 META_KEYS = {"sfreq", "fs", "sampling_rate", "sampling_rate_hz", "samplerate"}
 
 
+def _number(value: object) -> float:
+    """Parse one vendor table cell without making text metadata fatal."""
+    try:
+        text = str(value).strip()
+        return float(text) if text else np.nan
+    except (TypeError, ValueError):
+        return np.nan
+
+
+def _relative_time(values: np.ndarray) -> tuple[np.ndarray, str]:
+    """Normalize seconds/milliseconds/microseconds and large Unix timestamps."""
+    finite = values[np.isfinite(values)]
+    if not len(finite):
+        return values, "unknown"
+    differences = np.diff(finite)
+    positive = differences[differences > 0]
+    typical = float(np.median(positive)) if len(positive) else 0.0
+    magnitude = float(np.median(np.abs(finite)))
+    if magnitude > 1e14 or typical > 1e3:
+        scale, unit = 1e-6, "microseconds"
+    elif magnitude > 1e10 or typical > 1.0:
+        scale, unit = 1e-3, "milliseconds"
+    else:
+        scale, unit = 1.0, "seconds"
+    normalized = values * scale
+    origin = normalized[np.flatnonzero(np.isfinite(normalized))[0]]
+    return normalized - origin, unit
+
+
+def _metadata_pairs(rows: list[list[str]], stop: int) -> dict[str, str]:
+    """Collect key/value metadata rows found before a later signal header."""
+    metadata = {}
+    for index in range(max(0, stop - 8), stop - 1):
+        keys, values = rows[index], rows[index + 1]
+        if len(keys) != len(values):
+            continue
+        recognized = sum(bool(re.search(r"SAMPLING RATE|CHANNELS|DEVICE|RECORD", key, re.I)) for key in keys)
+        if recognized >= 2:
+            metadata.update({key.strip(): value.strip() for key, value in zip(keys, values) if key.strip()})
+    return metadata
+
+
+def _read_multistream_table(rows: list[list[str]], header_index: int, sidecar: dict):
+    """Read recorder exports containing metadata plus interleaved sensor streams.
+
+    The first implementation target is the common ``EEG.FP1``/``FNIRS.*`` style,
+    while the rules deliberately rely on prefixes rather than a device name.
+    """
+    headers = [_clean_name(value, index) for index, value in enumerate(rows[header_index])]
+    lowered = [name.lower() for name in headers]
+    time_index = next((i for i, name in enumerate(lowered) if name in TIME_NAMES), None)
+    eeg_indices = [i for i, name in enumerate(headers)
+                   if re.match(r"^EEG[._ -]", name, re.I) and not re.search(r"[._ -]PKN$", name, re.I)]
+    if time_index is None or not eeg_indices:
+        raise ValueError("multi-section table has no timestamp or EEG signal columns")
+
+    metadata = _metadata_pairs(rows, header_index)
+    body = rows[header_index + 1:]
+    samples, timestamps, source_rows = [], [], []
+    for row_index, row in enumerate(body):
+        padded = row + [""] * max(0, len(headers) - len(row))
+        signal = [_number(padded[index]) for index in eeg_indices]
+        # Asynchronous recorder exports also contain fNIRS/motion-only rows. They
+        # must not become zero-valued EEG samples or change the EEG sample rate.
+        if not any(np.isfinite(signal)):
+            continue
+        samples.append(signal)
+        timestamps.append(_number(padded[time_index]))
+        source_rows.append(padded)
+    if len(samples) < 2:
+        raise ValueError("fewer than two EEG samples were found after separating sensor streams")
+
+    data = np.asarray(samples, dtype=float).T
+    relative_time, time_unit = _relative_time(np.asarray(timestamps, dtype=float))
+    sfreq = _float(sidecar.get("sampling_rate_hz") or sidecar.get("sfreq"))
+    nominal = _float(metadata.get("EEG SAMPLING RATE"))
+    effective = _float(metadata.get("EEG EFFECTIVE SAMPLING RATE"))
+    finite_time = relative_time[np.isfinite(relative_time)]
+    # The full-span estimate preserves fractional effective rates when integer
+    # millisecond timestamps alternate between (for example) 3 and 4 ms.
+    elapsed = float(finite_time[-1] - finite_time[0]) if len(finite_time) > 1 else 0.0
+    inferred = (len(finite_time) - 1) / elapsed if elapsed > 0 else 0.0
+    sfreq = sfreq or nominal or inferred or effective
+
+    names = [re.sub(r"^EEG[._ -]", "", headers[index], flags=re.I) for index in eeg_indices]
+    if sidecar.get("channel_names"):
+        if len(sidecar["channel_names"]) != len(names):
+            raise ValueError("sidecar channel_names count does not match detected EEG columns")
+        names = list(sidecar["channel_names"])
+
+    event_index = next((i for i, name in enumerate(lowered) if name in EVENT_NAMES), None)
+    events = []
+    if event_index is not None:
+        previous = ""
+        for row, onset in zip(source_rows, relative_time):
+            value = row[event_index].strip()
+            normalized = value.lower()
+            if value and normalized not in {"0", "0.0", "undefined", "undefined:"} and value != previous:
+                events.append((float(onset), f"event/{value}"))
+            previous = value
+
+    streams = []
+    if eeg_indices: streams.append("EEG")
+    if any(name.upper().startswith("FNIRS.") for name in headers): streams.append("fNIRS")
+    if any(name.upper().startswith(("ACCEL.", "GYRO.")) for name in headers): streams.append("motion")
+    warnings = ["检测到复合采集 CSV；本次分离并导入 EEG 数据流"]
+    if inferred and sfreq and abs(sfreq - inferred) > max(.5, sfreq * .02):
+        warnings.append(f"名义采样率 {sfreq:g} Hz 与时间戳估计 {inferred:.3f} Hz 不一致，需要确认")
+    report = {
+        "adapter": "multisection_csv", "confidence": .92 if nominal else .82,
+        "layout": "samples_x_channels", "warnings": warnings, "conflicts": [],
+        "detected_streams": streams, "selected_stream": "EEG", "signal_header_row": header_index + 1,
+        "device_metadata": metadata, "timestamp_unit": time_unit,
+        "inference": ["自动定位元数据后的信号表头", "按 EEG.* 前缀分离通道",
+                      "忽略仅包含 fNIRS 或运动数据的异步记录行",
+                      f"采样率来源：{'sidecar' if sidecar.get('sampling_rate_hz') else '设备名义值' if nominal else '时间戳'}"],
+    }
+    return data, sfreq, names, events, report
+
+
 def _sidecar(path: Path) -> dict:
     candidates = [path.with_suffix(path.suffix + ".json"), path.with_suffix(".json")]
     for candidate in candidates:
@@ -70,13 +190,15 @@ def _channel_type(name: str, modality: str) -> str:
 
 def _unit_scale(unit: str, data: np.ndarray, modality: str) -> tuple[float, str, float, list[str]]:
     normalized = unit.strip().lower().replace("μ", "u").replace("µ", "u")
-    known = {"v": (1.0, "V"), "uv": (1e-6, "uV"), "mv": (1e-3, "mV")}
+    known = {"v": (1.0, "V"), "uv": (1e-6, "uV"), "mv": (1e-3, "mV"), "nv": (1e-9, "nV")}
     if normalized in known:
         scale, label = known[normalized]
         return scale, label, 1.0, []
     if modality != "EEG":
         return 1.0, unit or "a.u.", 0.4, ["非 EEG 表格单位未确认"]
     amplitude = float(np.nanmedian(np.ptp(data, axis=1))) if data.size else 0.0
+    if amplitude > 1e4:
+        return 1e-9, "nV", 0.45, ["未声明单位；数值量级更接近纳伏或设备原始计数，暂按纳伏预览，执行前必须确认"]
     if amplitude > 0.5:
         return 1e-6, "uV", 0.55, ["未声明单位；根据数值范围暂按微伏解释，需要人工确认"]
     return 1.0, "V", 0.65, ["未声明单位；根据数值范围暂按伏解释，需要人工确认"]
@@ -156,6 +278,14 @@ def _read_table(path: Path, sidecar: dict):
     rows = [row for row in rows if any(cell.strip() for cell in row)]
     if len(rows) < 2:
         raise ValueError("table does not contain enough rows")
+    # Some wearable recorders place one or more metadata rows before the actual
+    # signal header and interleave EEG, fNIRS, and IMU samples in the same file.
+    signal_header = next((index for index, row in enumerate(rows[:64])
+                          if any(cell.strip().lower() in TIME_NAMES for cell in row)
+                          and any(re.match(r"^EEG[._ -]", cell.strip(), re.I) for cell in row)), None)
+    if signal_header is not None and (signal_header > 0 or any(
+            name.upper().startswith(("FNIRS.", "ACCEL.", "GYRO.")) for name in rows[signal_header])):
+        return _read_multistream_table(rows, signal_header, sidecar)
     if sidecar.get('layout') == 'channels_x_samples':
         # 每一行可为纯数值，或以通道名开头；不将标注/时间行猜成信号。
         try:

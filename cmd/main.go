@@ -14,6 +14,8 @@ import (
 	"OnCallAgent/pkg/log"
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,7 +25,11 @@ func main() {
 	// 初始化日志记录器
 	log := log.InitLogger("info", "log/OnCallAgent.log")
 	//初始化配置
-	config, err := config.InitConfig("./config/config.json")
+	configPath := strings.TrimSpace(os.Getenv("NEUROFLOW_CONFIG_FILE"))
+	if configPath == "" {
+		configPath = "./config/config.json"
+	}
+	config, err := config.InitConfig(configPath)
 	if err != nil {
 		panic(err)
 	}
