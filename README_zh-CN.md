@@ -23,7 +23,7 @@
 
 <p align="center"><img src="docs/assets/ui-preview.svg" width="100%" alt="NeuroFlow 界面预览"></p>
 
-> 该图依据当前 Electron renderer 源码重建，用于展示现有界面布局，并非伪装成真实运行截图。待运行环境支持截图后可直接替换为真实软件截图。
+
 
 ## 系统架构
 
