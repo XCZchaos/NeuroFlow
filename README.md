@@ -23,7 +23,6 @@ The current implementation combines three foundations: trusted local inspection 
 
 <p align="center"><img src="docs/assets/ui-preview.svg" width="100%" alt="NeuroFlow interface preview"></p>
 
-> This preview is reconstructed from the current Electron renderer source. It is not presented as a runtime screenshot. A real application screenshot can replace it once runtime capture is available.
 
 ## Architecture
 
