@@ -11,4 +11,6 @@ type UserMessage struct {
 	Memory string `json:"memory"`
 	// ResponseMode 只控制回答深度和工具工作流，不要求模型暴露内部思维链。
 	ResponseMode string `json:"response_mode"`
+	// WorkflowPlan 是 Go 根据当前会话和文件事实制定的本轮检查顺序。
+	WorkflowPlan string `json:"workflow_plan"`
 }

@@ -27,6 +27,21 @@ func (u chatServer) BuildChatAgent(ctx context.Context) (r compose.Runnable[*Use
 	_ = g.AddLambdaNode(ReactAgent, reactAgentKeyOfLambda, compose.WithNodeName("ReActAgent"))
 
 	// 注意下面的 output key 设置，把查询出来的设置为了documents，匹配 ChatTemplate 里面说prompt
+	/*
+
+	                 InputToRag
+START ─────────→     ↓
+                 QdrantRetriever
+                        ↓
+                      ┌─────┐
+                      │     ↓
+START → InputToChat ──┴→ ChatTemplate
+                           ↓
+                       ReactAgent
+                           ↓
+                          END
+
+	*/
 	_ = g.AddRetrieverNode(QdrantRetriever, u.retriever, compose.WithOutputKey("documents"))
 	_ = g.AddLambdaNode(InputToChat, compose.InvokableLambdaWithOption(newInputToChatLambda), compose.WithNodeName("UserMessageToChat"))
 	_ = g.AddEdge(compose.START, InputToRag)

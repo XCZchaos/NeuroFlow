@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"OnCallAgent/internal/server/ai/toolinput"
 	"OnCallAgent/internal/server/analysisprogress"
 	"OnCallAgent/internal/server/dataset"
 	"OnCallAgent/internal/server/taskstate"
@@ -74,6 +75,11 @@ func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 			if input.SaveOutput != nil {
 				saveOutput = *input.SaveOutput
 			}
+			// 用户本轮明确说不保存时，以原话约束模型填写的 save_output。
+			// 此检查位于实际 MNE 调用前，避免模型漏填或误填 true 后落盘。
+			if toolinput.ExplicitNoSave(toolinput.UserText(ctx)) {
+				saveOutput = false
+			}
 			result, err := ExecuteNeuroAnalysis(ctx, input, saveOutput)
 			if err != nil {
 				// 数据缺少事件、坐标或参数不适用属于工具层可解释失败。把错误作为
@@ -97,12 +103,23 @@ func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 
 // ExecuteNeuroAnalysis 是 Agent function call 和本地 HTTP 接口共用的确定性执行层。
 func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOutput bool) (map[string]any, error) {
+	// 会话绑定是执行边界：模型不能把其他会话/文件的 dataset_id 填进本轮工具调用。
+	// 直接 HTTP 调用没有 Agent scope，继续走原有接口授权和数据集校验。
+	if scope, ok := taskstate.FromContext(ctx); ok && (scope.DatasetID == "" || scope.DatasetID != input.DatasetID) {
+		return nil, fmt.Errorf("dataset_id 与当前会话绑定不一致；请先在界面选择数据集")
+	}
 	analysisType := strings.ToLower(strings.TrimSpace(input.AnalysisType))
 	if analysisType == "" {
 		analysisType = "full"
 	}
 	if analysisType != "summary" && analysisType != "quality" && analysisType != "full" {
 		return nil, fmt.Errorf("analysis_type 必须是 summary、quality 或 full")
+	}
+	// The Agent may propose full preprocessing, but only the persisted workflow
+	// can execute it. Summary/quality remain read-only diagnostic operations.
+	// HTTP callers have no session scope and keep their existing explicit route.
+	if _, scoped := taskstate.FromContext(ctx); scoped && analysisType == "full" && !workflowExecutionAllowed(ctx) {
+		return nil, fmt.Errorf("WORKFLOW_REQUIRED: start, validate, then resume a preprocessing task before full analysis")
 	}
 	if input.StartSeconds < 0 || input.EndSeconds < 0 || (input.EndSeconds > 0 && input.EndSeconds <= input.StartSeconds) {
 		return nil, fmt.Errorf("分析时间范围无效")
@@ -131,7 +148,12 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 	if len(inspection.StructureConflicts) > 0 {
 		return nil, fmt.Errorf("数据结构仍有冲突，请先在 Electron 的数据结构确认页面核对后再运行")
 	}
-	if inspection.EventsRequireConfirmation && slices.Contains(input.EnabledSteps, "epoching") {
+	// 默认 full 流程也可能执行 Epoch；不能因模型省略 enabled_steps 就绕过事件确认。
+	eventSteps := len(input.EnabledSteps) == 0
+	for _, step := range []string{"epoching", "baseline", "autoreject", "erp", "time_frequency", "decoding"} {
+		eventSteps = eventSteps || slices.Contains(input.EnabledSteps, step)
+	}
+	if inspection.EventsRequireConfirmation && analysisType == "full" && eventSteps {
 		return nil, fmt.Errorf("事件字典尚未确认；事件分段前请先在数据结构确认页面确认事件含义")
 	}
 	script, err := neuroAnalysisScriptPath()
@@ -246,6 +268,39 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 		analysisprogress.Publish(input.DatasetID, "analysis", "failed", fmt.Sprint(result["message"]), 1)
 		return nil, fmt.Errorf("Python 分析失败: %v", result["message"])
 	}
+	// Reflection 阶段只信任 Python 成功返回的执行计划；不根据模型的回答推测步骤。
+	steps := map[string]string{}
+	var beforeScore, afterScore *float64
+	if payload, ok := result["result"].(map[string]any); ok {
+		if comparison, ok := payload["quality_comparison"].(map[string]any); ok {
+			if before, ok := comparison["before"].(map[string]any); ok {
+				if score, ok := before["score"].(float64); ok {
+					beforeScore = &score
+				}
+			}
+			if after, ok := comparison["after"].(map[string]any); ok {
+				if score, ok := after["score"].(float64); ok {
+					afterScore = &score
+				}
+			}
+		}
+		if plan, ok := payload["execution_plan"].([]any); ok {
+			for _, entry := range plan {
+				if item, ok := entry.(map[string]any); ok {
+					name, _ := item["step"].(string)
+					status, _ := item["status"].(string)
+					if name != "" {
+						steps[name] = status
+					}
+				}
+			}
+		}
+	}
+	saved := false
+	if output, ok := result["output"].(map[string]any); ok {
+		saved, _ = output["saved"].(bool)
+	}
+	toolinput.Record(ctx, toolinput.ToolResult{Name: "run_neuro_analysis", DatasetID: input.DatasetID, Succeeded: true, Saved: saved, Steps: steps, BeforeScore: beforeScore, AfterScore: afterScore})
 	// 前端只拿项目内相对路径。Electron 主进程会再次验证该路径必须位于 outputs 下，
 	// 因而渲染进程既能定位结果，也不会获得任意文件系统访问能力。
 	if output, ok := result["output"].(map[string]any); ok && output != nil {

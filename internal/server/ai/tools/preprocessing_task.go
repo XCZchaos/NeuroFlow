@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"OnCallAgent/internal/server/ai/toolinput"
 	"OnCallAgent/internal/server/dataset"
 	"OnCallAgent/internal/server/taskstate"
 	"github.com/cloudwego/eino/components/tool"
@@ -60,6 +61,12 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 		if in.Plan == nil || scope.DatasetID == "" || in.Plan.DatasetID != scope.DatasetID {
 			return nil, fmt.Errorf("plan must reference the dataset bound to this session")
 		}
+		// The current user's explicit no-save instruction outranks model arguments.
+		// Persist that decision so a later resume cannot silently save a file.
+		if toolinput.ExplicitNoSave(scope.UserMessage) {
+			noSave := false
+			in.Plan.SaveOutput = &noSave
+		}
 		record, ok := dataset.Get(scope.DatasetID)
 		if !ok {
 			return nil, fmt.Errorf("dataset unavailable; import and bind it first")
@@ -88,7 +95,7 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 			add("event_dictionary", "请说明各事件编码对应的实验含义。")
 		}
 		plan, _ := json.Marshal(in.Plan)
-		state = &taskstate.State{ID: uuid.NewString(), SessionID: scope.SessionID, DatasetID: scope.DatasetID, Status: "waiting_for_input", Fields: in.Fields, Answers: map[string]taskstate.Answer{}, Plan: plan, Steps: []taskstate.Step{{Name: "validate_import", Status: "pending"}, {Name: "run_neuro_analysis", Status: "pending"}}}
+		state = &taskstate.State{ID: uuid.NewString(), SessionID: scope.SessionID, DatasetID: scope.DatasetID, Status: "waiting_for_input", Fields: in.Fields, Answers: map[string]taskstate.Answer{}, Plan: plan, Steps: workflowSteps()}
 		state.Record("created", "Plan saved; pending fields must be answered before validation")
 		return state, scope.Store.Save(ctx, state)
 	}
@@ -147,7 +154,7 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 		}
 		state.Status = "waiting_for_input"
 		state.Validation = nil
-		state.Steps = []taskstate.Step{{Name: "validate_import", Status: "pending"}, {Name: "run_neuro_analysis", Status: "pending"}}
+		state.Steps = workflowSteps()
 		state.Record("retry_requested", in.UserQuote)
 	case "validate", "resume":
 		if state.Status == "failed" || state.Status == "interrupted" {
@@ -182,6 +189,10 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 		state.Status = "ready"
 		state.Record("validated", "")
 		if in.Action == "resume" {
+			// Existing tasks were persisted before result verification was added.
+			if len(state.Steps) < 3 {
+				state.Steps = append(state.Steps, taskstate.Step{Name: "verify_result", Status: "pending"})
+			}
 			state.Status = "running"
 			state.Steps[1].Status = "running"
 			state.Record("execution_started", "")
@@ -190,13 +201,19 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 			}
 			var plan NeuroAnalysisInput
 			if err = json.Unmarshal(state.Plan, &plan); err != nil {
-				return nil, err
+				state.Status = "failed"
+				state.Steps[1] = taskstate.Step{Name: "run_neuro_analysis", Status: "failed", Detail: err.Error()}
+				state.Record("execution_failed", err.Error())
+				return state, persistTask(ctx, scope.Store, state)
 			}
 			save := true
 			if plan.SaveOutput != nil {
 				save = *plan.SaveOutput
 			}
-			result, runErr := ExecuteNeuroAnalysis(ctx, plan, save)
+			if toolinput.ExplicitNoSave(scope.UserMessage) {
+				save = false
+			}
+			result, runErr := ExecuteNeuroAnalysis(withWorkflowExecution(ctx), plan, save)
 			if runErr != nil {
 				state.Status = "failed"
 				state.Steps[1].Status = "failed"
@@ -205,9 +222,21 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 			} else {
 				delete(result, "preview")
 				state.Result, _ = json.Marshal(result)
-				state.Status = "completed"
 				state.Steps[1].Status = "completed"
-				state.Record("completed", "")
+				state.Steps[2].Status = "running"
+				state.Record("verification_started", "")
+				if err = persistTask(ctx, scope.Store, state); err != nil {
+					return nil, err
+				}
+				if verifyErr := verifyWorkflowResult(result, plan, save); verifyErr != nil {
+					state.Status = "failed"
+					state.Steps[2] = taskstate.Step{Name: "verify_result", Status: "failed", Detail: verifyErr.Error()}
+					state.Record("verification_failed", verifyErr.Error())
+				} else {
+					state.Status = "completed"
+					state.Steps[2] = taskstate.Step{Name: "verify_result", Status: "completed"}
+					state.Record("verified", "Tool result, dataset binding, and save state checked")
+				}
 			}
 		}
 	default:

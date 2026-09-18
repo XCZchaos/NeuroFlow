@@ -482,6 +482,8 @@ GET    /sessions/:id/task
 
 当预处理依赖缺失的采样率、单位、矩阵方向、通道配置、montage 或事件含义时，Agent 会通过 `manage_preprocessing_task` 保存问题与完整执行计划，再向用户询问。用户回答后，Agent 记录结构化值及其原话，使用 MNE 重新读取并验证文件；验证通过才恢复原计划。
 
+完整预处理现在统一由后端 Workflow 控制：`start` 持久化方案与待确认字段，`validate` 重新读取并检查数据，`resume` 执行 MNE 并核验结果、步骤状态及保存状态。即使没有待确认字段，也必须经过这些阶段；Agent 直接调用 `run_neuro_analysis` 的 `full` 模式会被拒绝。`summary` 和 `quality` 仍可用于只读诊断。任务的 `verify_result` 步骤与审计事件可在 Electron 任务面板查看；若执行或核验失败，任务进入失败状态，用户明确要求重试后才可继续。
+
 任务状态与会话一同保存在 `data/neuroflow.db`，不依赖最近消息窗口或长期摘要。每次更新带 revision，能够拦截并发覆盖和重复执行；后端在执行过程中重启时会将任务标记为 `interrupted`，不会自动重复可能已经产生文件的操作。可通过以下接口查看最新状态：
 
 ```http
@@ -639,6 +641,7 @@ NeuroFlow/
 | `bids_support.py` | 使用 `mne-bids` 定位并读取 EEG、MEG 或 fNIRS BIDS recording |
 | `preview_dataset.py` | 按通道和时间范围读取真实信号，并抽稀为 Electron 可绘制数据 |
 | `analyze_dataset.py` | 调度 EEG/MEG/fNIRS MNE 流程，生成质量指标、波形、输出文件和审计记录 |
+| `neurokit_analysis.py` | 将已确认的 EEG 数据经 MNE 读取后交给 NeuroKit2，计算只读坏道候选、频带功率或 GFP 摘要；不保存预处理文件 |
 | `advanced_analysis.py` | MEG SSS/tSSS/空房 SSP、确定性参数搜索及 ERP/时频/解码分析 |
 | `bids_catalog.py` | 枚举 BIDS recording 和实体，不加载完整采样数组 |
 | `test_*.py` | 结构化导入、导入确认和真实分析的回归测试 |
@@ -664,11 +667,12 @@ NeuroFlow/
 - `server/ai/agent/chat/` 组装检索、提示模板和 Eino ReAct Agent。
 - `server/ai/agent/knowledge_index/` 将 Markdown 加载、切分并写入向量库。
 - `server/ai/agent/plan_execute_replan/` 是原项目保留的实验性工作流，目前不等同于主聊天 Agent 的可恢复预处理任务。
+- `server/ai/toolinput/` 保存单次请求的用户原话与工具执行证据，供执行前校验和执行后核验使用。
 - `server/ai/tools/` 放 Agent 可以选择的 function call；工具负责确定性校验或执行，不让模型直接运行任意代码。
 - `server/batch/` 逐项执行多数据集 MNE 流程，单项失败不会中止整个批次。
 - `server/batchstate/` 将批次、数据集状态、错误、质量统计和恢复点持久化到 SQLite。
 - `server/knowledgecatalog/` 扫描本地原子知识并校验稳定 ID、来源、版本和复核元数据。
-- `server/chatServer/` 管理非流式/流式聊天、最近消息、长期摘要、偏好和会话绑定。
+- `server/chatServer/` 管理非流式/流式聊天、最近消息、长期摘要、偏好、会话绑定，以及本轮预检查计划和执行后结论核验。
 - `server/dataset/` 保存进程内 `dataset_id → 本地路径/元数据` 映射，并调用 Python 读取信号。
 - `server/taskstate/` 把待确认字段、用户答案、验证证据、执行计划和审计状态保存到 SQLite。
 - `server/model/` 根据 `config.json` 创建兼容 OpenAI API 的模型客户端。
@@ -706,11 +710,14 @@ Agent 可以自主选择：
 - `validate_acquisition_config`：核对用户声明、设备知识映射和文件元数据
 - `create_neuro_preprocessing_draft`：生成非执行型预处理草案
 - `run_neuro_analysis`：根据 `dataset_id` 在本机执行 EEG/MEG/fNIRS 分析，只向模型返回汇总指标
+- `run_neurokit_analysis`：按 `dataset_id` 和 `method` 调用 NeuroKit2 的 EEG 坏道检测、频带功率或 GFP；可选时间窗和通道，结果只读且不替代 MNE 预处理
 - `manage_preprocessing_task`：保存待确认信息、验证证据和计划，并在验证通过后恢复执行
 - `query_internal_docs`：按语义检索 BCI 专家知识库
 - `audit_knowledge_evidence`：逐结论核验知识 ID、官方来源与引用覆盖率
 
 系统提示词要求 Agent 区分“文件已经证明的事实”“建议的处理方案”和“已经执行的结果”。
+
+数据操作采用三段流程：Go 后端根据会话绑定、文件结构和任务目标生成本轮检查计划；Eino ReAct Agent 根据工具观察结果选择下一步；工具把成功执行、保存状态、步骤状态和质量评分写入本轮证据记录，后端在回答入库及展示前核对“已完成”“已保存”“质量改善”等执行性结论，并核对知识引用的 ID 和官方来源。对执行性请求，流式文本会先缓冲至核验完成；普通问答仍逐块输出。该核验是确定性检查，不是第二个大模型 Agent，也不能替代研究者对科学结论的复核。
 
 ### 4. RAG 工具
 

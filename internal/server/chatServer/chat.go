@@ -2,6 +2,7 @@ package chatServer
 
 import (
 	"OnCallAgent/internal/server/ai/agent/chat"
+	"OnCallAgent/internal/server/ai/toolinput"
 	"OnCallAgent/internal/server/taskstate"
 	"context"
 	"encoding/json"
@@ -56,22 +57,31 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string, respo
 	if err != nil {
 		return "", err
 	}
+	// 同步和流式入口都把本轮原话传给工具层，供模型参数的来源核验使用。
+	// 这份上下文不改变展示给模型的消息，也不会写入长期记忆。
+	ctx = toolinput.WithUserText(ctx, question)
+	plan := planTurn(question, session.DatasetID)
+	trace := &toolinput.Trace{}
+	ctx = toolinput.WithTrace(ctx, trace)
 	output, err := c.runner.Invoke(ctx, &chat.UserMessage{
 		ID:           id,
 		Query:        question,
 		History:      history,
 		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
+		WorkflowPlan: plan.Text,
 	})
 	if err != nil {
 		c.logger.Errorf("Agent 调用失败, session_id=%s, err=%v", id, err)
 		return "", fmt.Errorf("Agent 调用失败: %w", err)
 	}
 
-	if err = c.memory.AppendTurn(ctx, id, question, output.Content); err != nil {
+	// Reflection 在答案写入长期会话前执行，避免未核验的完成声明成为后续记忆。
+	answer := reflectTurn(output.Content, trace.Snapshot())
+	if err = c.memory.AppendTurn(ctx, id, question, answer); err != nil {
 		return "", err
 	}
-	return output.Content, nil
+	return answer, nil
 }
 
 func (c *chatServer) ChatSream(ctx context.Context, question string, id string, responseMode string, msgChan *chan string, doneChan *chan struct{}) error {
@@ -99,12 +109,17 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 	if err != nil {
 		return err
 	}
+	ctx = toolinput.WithUserText(ctx, question)
+	plan := planTurn(question, session.DatasetID)
+	trace := &toolinput.Trace{}
+	ctx = toolinput.WithTrace(ctx, trace)
 	output, err := c.runner.Stream(ctx, &chat.UserMessage{
 		ID:           id,
 		Query:        question,
 		History:      history,
 		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
+		WorkflowPlan: plan.Text,
 	})
 	if err != nil {
 		c.logger.Errorf("Agent 流式调用失败, session_id=%s, err=%v", id, err)
@@ -121,13 +136,31 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 
 		message, receiveErr := output.Recv()
 		if errors.Is(receiveErr, io.EOF) {
-			return c.memory.AppendTurn(ctx, id, question, response.String())
+			verified := reflectTurn(response.String(), trace.Snapshot())
+			if plan.RequiresVerification {
+				// 执行性请求要先核验完整回答，再发送给界面；普通问答仍逐块流式输出。
+				select {
+				case *msgChan <- verified:
+				case <-ctx.Done():
+					return nil
+				}
+			} else if verified != response.String() {
+				select {
+				case *msgChan <- "\n\n" + verified:
+				case <-ctx.Done():
+					return nil
+				}
+			}
+			return c.memory.AppendTurn(ctx, id, question, verified)
 		}
 		if receiveErr != nil {
 			c.logger.Errorf("接收 Agent 流失败, session_id=%s, err=%v", id, receiveErr)
 			return fmt.Errorf("接收 Agent 流失败: %w", receiveErr)
 		}
 		response.WriteString(message.Content)
+		if plan.RequiresVerification {
+			continue
+		}
 		select {
 		case *msgChan <- message.Content:
 		case <-ctx.Done():

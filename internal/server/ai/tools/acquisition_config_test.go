@@ -3,6 +3,7 @@ package tools
 import (
 	"OnCallAgent/internal/server/dataset"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,36 @@ func TestBuildAcquisitionValidationDeclaredTwoChannelEEG(t *testing.T) {
 	}
 	if len(result.Warnings) < 2 {
 		t.Fatalf("expected reference and ICA warnings, got %v", result.Warnings)
+	}
+}
+
+func TestValidateAcquisitionEvidenceRequiresCurrentUserQuote(t *testing.T) {
+	input := AcquisitionConfigInput{
+		Modality: "EEG", ChannelCount: 2, SamplingRateHz: 250,
+		FieldEvidence: map[string]string{"channel_count": "2通道", "sampling_rate_hz": "250Hz"},
+	}
+	if err := validateAcquisitionEvidence(input, "这是2通道、250Hz的EEG"); err != nil {
+		t.Fatalf("explicit values should pass: %v", err)
+	}
+	input.FieldEvidence["sampling_rate_hz"] = "256Hz"
+	if err := validateAcquisitionEvidence(input, "这是2通道、250Hz的EEG"); err == nil {
+		t.Fatal("a quote absent from the current user message must be rejected")
+	}
+	input.FieldEvidence["sampling_rate_hz"] = "250Hz"
+	input.ChannelCount = 25
+	if err := validateAcquisitionEvidence(input, "这是2通道、250Hz的EEG"); err == nil || !strings.Contains(err.Error(), "channel_count") {
+		t.Fatalf("a mismatched value must be rejected: %v", err)
+	}
+}
+
+func TestValidateAcquisitionEvidenceLeavesFileFactsUnknown(t *testing.T) {
+	input := AcquisitionConfigInput{DatasetID: "dataset-1", Modality: "EEG"}
+	if err := validateAcquisitionEvidence(input, "请检查我上传的数据"); err != nil {
+		t.Fatalf("unknown user declarations should remain omitted: %v", err)
+	}
+	input.SamplingRateHz = 250 // 可能是模型从设备说明或文件推断出的数值，不能冒充用户声明。
+	if err := validateAcquisitionEvidence(input, "请检查我上传的数据"); err == nil {
+		t.Fatal("an unquoted inferred sample rate must be rejected")
 	}
 }
 

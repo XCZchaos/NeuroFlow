@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"OnCallAgent/internal/server/ai/toolinput"
 	"OnCallAgent/internal/server/dataset"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -24,6 +26,9 @@ type AcquisitionConfigInput struct {
 	LineFrequencyHz float64  `json:"line_frequency_hz,omitempty" jsonschema:"description=采集环境工频 50 或 60 Hz；未知时为 0"`
 	Reference       string   `json:"reference,omitempty" jsonschema:"description=采集参考方式或参考电极；未知时省略"`
 	ChannelNames    []string `json:"channel_names,omitempty" jsonschema:"description=用户声明的通道名称列表"`
+	// 数值字段必须给出当前轮用户原话的短摘录，例如 {"sampling_rate_hz":"250Hz"}。
+	// 服务端会核对摘录确实出现在本轮消息中，阻止模型把设备默认值当成用户声明。
+	FieldEvidence map[string]string `json:"field_evidence,omitempty" jsonschema:"description=仅用于本轮用户明确声明的数值字段：channel_count、sampling_rate_hz、line_frequency_hz；值必须是用户原话的连续片段，不要引用文件或知识库"`
 }
 
 type AcquisitionCheck struct {
@@ -89,9 +94,14 @@ func findDeviceProfile(name string) *DeviceProfile {
 func ValidateAcquisitionConfigTool() (tool.InvokableTool, error) {
 	return utils.InferTool(
 		"validate_acquisition_config",
-		"解析并验证用户描述的 EEG、MEG 或 fNIRS 采集配置，包括设备、通道数、通道名、采样率、工频和参考方式。提供 dataset_id 时与 MNE 读取的文件元数据逐项核对；没有文件时只做物理约束和流程适用性检查，不得声称已经验证真实数据。",
+		"解析并验证用户描述的 EEG、MEG 或 fNIRS 采集配置，包括设备、通道数、通道名、采样率、工频和参考方式。数值声明须在 field_evidence 中附当前轮用户原话；没有原话的字段保持未知，不得拿设备规格或文件元数据冒充用户声明。提供 dataset_id 时与 MNE 文件元数据核对；没有文件时不能声称已验证真实数据。",
 		func(ctx context.Context, input AcquisitionConfigInput) (string, error) {
-			_ = ctx
+			// 参数类型由 Eino 生成的工具 Schema 约束；这里进一步验证语义来源。
+			// 返回可修正的观察结果，让 ReAct Agent 删除无依据的字段后再调用。
+			if err := validateAcquisitionEvidence(input, toolinput.UserText(ctx)); err != nil {
+				payload, _ := json.Marshal(map[string]any{"ok": false, "code": "TOOL_ARGUMENTS_INVALID", "message": err.Error(), "retryable": true})
+				return string(payload), nil
+			}
 			var observed *dataset.Inspection
 			if strings.TrimSpace(input.DatasetID) != "" {
 				if record, ok := dataset.Get(input.DatasetID); ok {
@@ -107,6 +117,38 @@ func ValidateAcquisitionConfigTool() (tool.InvokableTool, error) {
 			return string(payload), nil
 		},
 	)
+}
+
+// validateAcquisitionEvidence 只检查模型声称来自“本轮用户”的数值。
+// 当前轮原话不存在的值应留空，由 dataset_id 对应的 MNE Inspection 提供文件事实。
+// 这是来源检查，不负责判断文件事实是否正确，后者由 BuildAcquisitionValidation 完成。
+func validateAcquisitionEvidence(input AcquisitionConfigInput, userText string) error {
+	if strings.TrimSpace(userText) == "" {
+		return nil // 兼容直接调用工具的非聊天入口。
+	}
+	fields := []struct {
+		name  string
+		value float64
+	}{
+		{"channel_count", float64(input.ChannelCount)},
+		{"sampling_rate_hz", input.SamplingRateHz},
+		{"line_frequency_hz", input.LineFrequencyHz},
+	}
+	for _, field := range fields {
+		if field.value == 0 {
+			continue
+		}
+		quote := strings.TrimSpace(input.FieldEvidence[field.name])
+		if quote == "" || !strings.Contains(userText, quote) {
+			return fmt.Errorf("%s 缺少本轮用户原话依据；若它来自文件或设备规格，请省略该声明字段", field.name)
+		}
+		// 数字边界避免把“25”误认为“250Hz”的依据；允许 250 与 250.0 等价。
+		pattern := fmt.Sprintf(`(^|[^0-9.])%s(?:\.0+)?($|[^0-9.])`, regexp.QuoteMeta(fmt.Sprintf("%g", field.value)))
+		if !regexp.MustCompile(pattern).MatchString(quote) {
+			return fmt.Errorf("%s 的依据片段不包含对应数值，请重新提取用户原话", field.name)
+		}
+	}
+	return nil
 }
 
 // BuildAcquisitionValidation 是不依赖大模型的确定性规则层，便于测试和复用。

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"OnCallAgent/internal/server/ai/toolinput"
 	"OnCallAgent/internal/server/dataset"
 	"context"
 	"encoding/json"
@@ -29,6 +30,7 @@ func InspectDatasetTool() (tool.InvokableTool, error) {
 			if err != nil {
 				return "", fmt.Errorf("序列化数据集信息: %w", err)
 			}
+			toolinput.Record(ctx, toolinput.ToolResult{Name: "inspect_dataset", DatasetID: input.DatasetID, Succeeded: true})
 			return string(payload), nil
 		})
 }

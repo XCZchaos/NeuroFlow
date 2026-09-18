@@ -18,5 +18,6 @@ func newInputToChatLambda(ctx context.Context, input *UserMessage, opts ...compo
 		"memory":        input.Memory,
 		"response_mode": responseMode,
 		"date":          time.Now().Format("2006-01-02 15:04:05"),
+		"workflow_plan": input.WorkflowPlan,
 	}, nil
 }
