@@ -1,38 +1,42 @@
+/* 文档全部随应用离线分发；与 RAG 索引无关。保留稳定的 topic ID，供组件提问定位。 */
 (function createHelpView(global){
   const i18n=global.NeuroI18n;
-  const zh=[
-    ['overview','1. 软件简介','了解 NeuroFlow、Agent 与 MNE 的分工。',['NeuroFlow 是面向 EEG、MEG 和 fNIRS 的本地神经信号工作台。Electron 负责界面，Go、Gin 与 Eino 负责 Agent 和工具调度，Python/MNE 负责真实信号计算。','Agent 只能调用已注册、带参数约束和审计记录的工具。文字建议不代表已经执行；只有工具记录为 completed 才表示成功。']],
-    ['first','2. 第一次启动','按照正确顺序连接依赖与后端。',['开发模式先安装依赖并启动 Qdrant、Ollama，再运行 go run ./cmd。','启动 Electron，打开“连接设置”，配置大模型并选择“连接 Go 后端”。','顶部显示“Go 后端已连接”后，再导入数据和使用 Agent。','打包版包含随包后端时由 Electron 自动管理；终端启动的开发后端需要手动重启。']],
-    ['llm','3. 配置大模型','填写 OpenAI 兼容接口，或导入 JSON。',['API Base 是服务商提供的 OpenAI 兼容地址，通常以 /v1 结尾；Model 必须是该接口支持的真实模型名；Max tokens 控制单次最大输出。','可导入包含 openai 对象的项目配置 JSON，也可导入只有 api_key、api_base、model、max_tokens 的 JSON。','API Key 使用 Electron safeStorage 加密，不写入 Git、localStorage、聊天上下文或流程导出文件。']],
-    ['services','4. 后端与知识库服务','区分 LLM、Qdrant、Ollama 和 MNE。',['LLM 理解问题并选择工具；Qdrant 保存 RAG 向量；Ollama 默认生成本地 embedding；Python/MNE 读取和处理信号。','默认 Go 地址为 localhost:8819，Qdrant gRPC 为 6334，Ollama 为 11434。任何服务不可用时，相关能力会返回明确错误。']],
-    ['import','5. 导入数据','从文件选择到真实波形预览。',['支持 EDF/BDF/GDF、BrainVision、EEGLAB、FIF、CNT、EGI、SNIRF、KIT、CTF、CSV/TSV、MAT、自定义二进制和 BIDS。','选择文件后依次显示“读取文件”“解析数据结构”“读取真实信号预览”。请等待当前阶段完成，不要重复导入。','核对通道数、采样率、时长和格式；出现结构确认时先确认，再检查真实波形。原始文件保持在原位置，不会传给大模型。','BrainVision 要保留 VHDR/VMRK/EEG，EEGLAB 外部数据要保留 SET/FDT，CTF 要选择完整 .ds 目录。']],
-    ['structured','6. CSV、MAT 与复合文件','确认方向、单位、采样率与事件。',['NeuroFlow 能识别元数据在前、真实表头在后，以及 EEG、fNIRS、运动数据交错的复合 CSV。','自动推断始终带置信度。依次核对 samples×channels 方向、名义/时间戳采样率、nV/µV/mV/V、通道名称与类型、参考通道、排除列和事件含义。','使用“重新试读”验证振幅和时长。存在冲突或低置信度时不要直接运行科研分析。']],
-    ['agent','7. 使用 Agent','查询数据事实、生成计划并执行工具。',['可以询问通道数、采样率、时长、事件或质量，也可以要求自动预处理。涉及文件事实时 Agent 先调用 inspect_dataset，真实处理使用 run_neuro_analysis。','即时回答适合简单问题；深度分析会检索本地知识、解释依据、保存任务状态并在条件满足时调用工具。','示例：这个文件有多少 EEG 通道和事件？\n示例：不要保存文件，自动完成质量检查和预处理。\n示例：保存结果，并生成 ERP、时频和解码报告。']],
-    ['eeg','8. EEG 处理流程','质量控制、Epoch 与高级分析。',['EEG 支持坏道检测、条件满足时插值、陷波、带通、参考、ICA、重采样、Epoch、基线和 Epoch 拒绝。','高级分析包括 ERP/GFP、Morlet 时频和 CSP＋LDA 分层交叉验证。确定性参数搜索使用固定候选和明确评分；可恢复步骤最多重试两次并保留最近有效检查点。','记录内解码只是探索性估计。跨会话或跨受试者结论需要分组切分。']],
-    ['other','9. MEG 与 fNIRS','算法条件与能力边界。',['MEG 支持空房 SSP、Maxwell Filter、SSS/tSSS、陷波和带通。SSS 需要设备坐标、头位变换和线圈信息；环境噪声处理需要兼容的空房 MEG。','fNIRS 支持光强转光密度、TDDR、Beer–Lambert 转换和滤波。波长、源探测器信息或通道类型不足时会停止或降级，并记录原因。']],
-    ['signal','10. 信号预览与通道','浏览完整时间轴并查看单个通道。',['使用“原始/处理后”切换数据来源；拖动时间轴或 Shift＋滚轮横向移动；使用 ＋/− 缩放。','点击波形、通道列表或电极位置进入单通道视图，可查看最小值、最大值、均值和 RMS，并导出当前窗口 CSV。','总览波形会抽稀以保证性能，保存的 FIF/BIDS 结果保留完整数据。未保存模式只保留本次返回的处理预览。']],
-    ['tasks','11. 任务、进度与重试','理解每一种执行状态。',['后端通过 SSE 推送 started、candidate、completed、degraded、skipped 和 failed，任务面板可在刷新后恢复持久化状态。','等待确认表示缺少会影响科学结论的字段。degraded 表示使用了审计中说明的回退方案，不代表该算法成功完成。']],
-    ['outputs','12. 结果、BIDS 与报告','保存可复现处理证据。',['勾选保存会生成处理 FIF、审计 JSON 和 HTML 报告，记录输入哈希、软件版本、随机种子、参数、步骤状态和质量比较。','BIDS 浏览器用于选择 recording；符合条件的 EEG/MEG 输入可写入 outputs 下的 BIDS Derivatives，保留 subject/session/task/run，且不会覆盖原始数据。']],
-    ['privacy','13. 数据与隐私','了解哪些信息会进入模型。',['原始波形、本地绝对路径和 API Key 不发送给大模型。模型只接收对话、模态、dataset_id、经过验证的元数据和受限的工具结果摘要。','会话、摘要、研究目标和偏好保存在本机 SQLite。输出、数据库、本地配置、日志和真实数据均排除在 Git 提交范围之外。']],
-    ['errors','14. 常见问题排查','根据现象定位问题。',['6334 拒绝连接：启动 Qdrant 并确认 gRPC 端口。\nAgent 连接失败：检查 8819、API Base、模型和网络，开发后端修改配置后要重启。\nCSV 解析失败：查看失败阶段、多表头、分隔符、单位和采样率。\n振幅异常：核对 nV/µV/mV/V、硬件增益和直流偏置。\n没有 ERP/解码：核对事件字典、Epoch 窗口、每类试次数及保留 Epoch。\nMEG SSS 降级：检查 dev_head_t、设备坐标、线圈和 tSSS 窗口。']]
-  ];
-  const en=[
-    ['overview','1. Overview','How NeuroFlow, the Agent, and MNE work together.',['Electron provides the workspace; Go, Gin, and Eino run the Agent and tools; Python/MNE performs real signal computation. Recommendations are not executed results unless a tool step is completed.']],
-    ['first','2. First run','Connect dependencies in the correct order.',['For development, start Qdrant and Ollama before go run ./cmd. Open Connection settings, configure the LLM, select the Go backend, and verify the online status. Packaged backends can be managed by Electron.']],
-    ['llm','3. LLM configuration','Use an OpenAI-compatible endpoint or import JSON.',['Set API Base, a supported Model, and Max tokens. Import either a project JSON with an openai object or a flat model JSON. API keys are encrypted with safeStorage and excluded from Git, localStorage, chat, and pipeline exports.']],
-    ['services','4. Backend services','LLM, Qdrant, Ollama, and MNE have separate roles.',['The LLM selects tools, Qdrant stores RAG vectors, Ollama supplies embeddings, and Python/MNE processes signals. Defaults are Go :8819, Qdrant gRPC :6334, and Ollama :11434.']],
-    ['import','5. Importing data','From file selection to real preview.',['Supported inputs include common MNE formats, CSV/TSV, MAT, sidecar binary, and BIDS. Wait for reading, structure parsing, and preview stages; then verify channels, rate, duration, format, and the real waveform. Keep all companion files together.']],
-    ['structured','6. CSV, MAT, and mixed streams','Confirm orientation, units, rate, and events.',['Mixed metadata/EEG/fNIRS/motion CSV exports are detected. Review samples×channels orientation, nominal versus timestamp rate, voltage unit, channel types, reference, excluded columns, and event meaning. Reread before analysis when confidence is low.']],
-    ['agent','7. Using the Agent','Inspect facts, plan, and execute tools.',['Ask about channels, rate, events, quality, or automatic preprocessing. Quick mode suits simple facts; Deep mode retrieves evidence and maintains task state. The Agent inspects metadata before running constrained MNE tools.']],
-    ['eeg','8. EEG workflow','Quality control through ERP, TFR, and decoding.',['EEG supports bad channels, filters, reference, ICA, resampling, epochs, baseline, rejection, ERP/GFP, Morlet power, and CSP+LDA cross-validation. Search and retries are deterministic and audited; within-recording decoding is exploratory.']],
-    ['other','9. MEG and fNIRS','Requirements and limitations.',['MEG supports empty-room SSP and SSS/tSSS when device geometry is valid. fNIRS supports optical density, TDDR, Beer–Lambert conversion, and filtering when wavelengths and geometry are available.']],
-    ['signal','10. Signals and channels','Navigate the whole recording.',['Switch Raw/Processed, drag the timeline or use Shift+wheel, and use +/− to zoom. Click a trace or electrode for single-channel statistics and CSV export. Overview traces are downsampled; saved outputs retain full data.']],
-    ['tasks','11. Tasks and progress','Understand execution states.',['SSE reports started, candidate, completed, degraded, skipped, and failed. Waiting means scientific metadata needs confirmation. Degraded means a documented fallback, not full algorithm success.']],
-    ['outputs','12. Outputs and BIDS','Create reproducible evidence.',['Saved runs create processed FIF, audit JSON, and HTML reports with hashes, versions, seeds, parameters, steps, and quality. Eligible BIDS inputs create derivatives without overwriting source data.']],
-    ['privacy','13. Privacy','What stays local and what reaches the model.',['Raw signals, absolute paths, and API keys stay out of model context. The model receives chat, modality, dataset IDs, verified metadata, and bounded tool summaries. Sessions and memories are stored in local SQLite.']],
-    ['errors','14. Troubleshooting','Resolve common failures.',['Port 6334 refused: start Qdrant.\nAgent unavailable: check port 8819, API Base, model, and restart a development backend.\nCSV failure: inspect stages, headers, delimiter, units, and rate.\nImplausible amplitude: confirm voltage unit, gain, and DC offset.\nNo ERP/decoding: verify events and retained epochs.\nSSS degraded: verify transforms, device geometry, coils, and tSSS duration.']]
-  ];
-  function ensure(){if(document.querySelector('[data-view="help"]'))return;const button=document.createElement('button');button.className='nav-item';button.dataset.view='help';button.innerHTML='<span>?</span><span class="help-nav-label"></span>';document.querySelector('.nav-item[data-view="sessions"]').after(button);const view=document.createElement('section');view.id='help-view';view.className='card alternative-view help-view';view.hidden=true;document.querySelector('main').append(view);}
-  function render(){ensure();const english=i18n.getLocale()==='en',content=english?en:zh,view=document.querySelector('#help-view');document.querySelector('.help-nav-label').textContent=english?'User guide':'使用说明';view.replaceChildren();const head=document.createElement('header');head.className='help-heading';head.innerHTML=`<div><div class="eyebrow">NEUROFLOW GUIDE</div><h2>${english?'User guide':'软件使用说明'}</h2><p>${english?'Offline instructions for setup, analysis, and review.':'从首次配置到科研结果复核的完整离线说明。'}</p></div><input id="help-search" type="search" placeholder="${english?'Search topics and errors':'搜索功能或错误'}">`;view.append(head);const layout=document.createElement('div');layout.className='help-layout';const toc=document.createElement('nav');toc.className='help-toc';const articles=document.createElement('div');articles.className='help-articles';for(const [id,title,summary,paragraphs] of content){const link=document.createElement('a');link.href=`#help-${id}`;link.textContent=title;toc.append(link);const article=document.createElement('article');article.id=`help-${id}`;article.dataset.search=`${title} ${summary} ${paragraphs.join(' ')}`.toLowerCase();const h=document.createElement('h3');h.textContent=title;const lead=document.createElement('p');lead.className='help-summary';lead.textContent=summary;article.append(h,lead);for(const paragraph of paragraphs){const p=document.createElement('p');p.textContent=paragraph;article.append(p);}articles.append(article);}layout.append(toc,articles);view.append(layout);view.querySelector('#help-search').addEventListener('input',event=>{const query=event.target.value.trim().toLowerCase();articles.querySelectorAll('article').forEach(article=>article.hidden=Boolean(query&&!article.dataset.search.includes(query)));});toc.addEventListener('click',event=>{if(event.target.tagName==='A'){event.preventDefault();view.querySelector(event.target.getAttribute('href'))?.scrollIntoView({behavior:'smooth',block:'start'});}});}
+  const el=(tag,className,text)=>{const node=document.createElement(tag);if(className)node.className=className;if(text)node.textContent=text;return node;};
+  function ensure(){
+    if(document.querySelector('[data-view="help"]'))return;
+    const button=el('button','nav-item');button.dataset.view='help';button.append(el('span','','?'),el('span','help-nav-label i18n-text'));
+    document.querySelector('.nav-item[data-view="sessions"]').after(button);
+    const view=el('section','card alternative-view help-view');view.id='help-view';view.hidden=true;document.querySelector('main').append(view);
+  }
+  function render(){
+    ensure();
+    const english=i18n.getLocale()==='en',content=global.NeuroHelpContent[english?'en':'zh'],view=document.querySelector('#help-view');
+    const previousQuery=view.querySelector('#help-search')?.value||'';
+    document.querySelector('.help-nav-label').textContent=english?'User guide':'使用说明';view.replaceChildren();
+    const version=document.querySelector('meta[name="application-version"]')?.content||'';
+    const heading=el('header','help-heading'),intro=el('div'),title=el('h2','',english?'User guide':'软件使用说明');
+    title.append(el('span','help-version','v'+version.replace(/\.0$/,'')));
+    intro.append(el('div','eyebrow','NEUROFLOW GUIDE'),title,el('p','',english?'Setup, workflows, examples, and troubleshooting — available offline.':'从首次配置、分模态操作到结果复核，附提问示例与故障排查。离线可查阅。'));
+    const search=el('input');search.id='help-search';search.type='search';search.placeholder=english?'Search topics and errors':'搜索功能或错误';search.setAttribute('aria-label',search.placeholder);search.value=previousQuery;
+    heading.append(intro,search);view.append(heading);
+    const layout=el('div','help-layout'),toc=el('nav','help-toc'),articles=el('div','help-articles');toc.setAttribute('aria-label',english?'Guide contents':'说明目录');
+    const entries=[];
+    for(const [id,title,summary,blocks] of content){
+      const link=el('a','',title);link.href=`#help-${id}`;toc.append(link);
+      const article=el('article');article.id=`help-${id}`;article.append(el('h3','',title),el('p','help-summary',summary));
+      for(const block of blocks){
+        if(typeof block==='string'){article.append(el('p','',block));continue;}
+        // 扩展说明可用小标题和真实列表，避免长段文字挤在一起；始终使用 textContent。
+        if(block.title)article.append(el('h4','',block.title));
+        const list=el(block.ordered?'ol':'ul');for(const item of block.items||[])list.append(el('li','',item));article.append(list);
+      }
+      article.dataset.search=article.textContent.toLowerCase();articles.append(article);entries.push({article,link});
+    }
+    const empty=el('p','help-empty',english?'No matching topics. Try a file type, page name, or error code.':'没有匹配的说明，请尝试文件类型、页面名称或错误代码。');empty.setAttribute('role','status');empty.hidden=true;articles.append(empty);
+    layout.append(toc,articles);view.append(layout);
+    const filter=()=>{const query=search.value.trim().toLowerCase();let visible=0;for(const {article,link} of entries){const hidden=Boolean(query&&!article.dataset.search.includes(query));article.hidden=link.hidden=hidden;if(!hidden)visible++;}empty.hidden=visible!==0;};
+    search.addEventListener('input',filter);filter();
+    toc.addEventListener('click',event=>{const anchor=event.target.closest('a');if(!anchor)return;event.preventDefault();view.querySelector(anchor.getAttribute('href'))?.scrollIntoView({behavior:'smooth',block:'start'});});
+  }
   ensure();render();document.addEventListener('neuroflow:localechange',render);global.NeuroHelp=Object.freeze({render});
 })(window);

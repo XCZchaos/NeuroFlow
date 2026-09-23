@@ -9,13 +9,14 @@ type traceKey struct{}
 
 // ToolResult 只记录可核验的工具事实；大模型生成的文字不能写进执行证据。
 type ToolResult struct {
-	Name        string
-	DatasetID   string
-	Succeeded   bool
-	Saved       bool
-	Steps       map[string]string
-	BeforeScore *float64
-	AfterScore  *float64
+	Name         string
+	DatasetID    string
+	Succeeded    bool
+	Saved        bool
+	Steps        map[string]string
+	BeforeScore  *float64
+	AfterScore   *float64
+	KnowledgeIDs []string
 }
 
 // Trace 是单次聊天请求的执行记录。Eino 的工具节点可能并发执行，故需加锁。
@@ -47,6 +48,7 @@ func (t *Trace) Snapshot() []ToolResult {
 	result := make([]ToolResult, len(t.results))
 	for i, item := range t.results {
 		result[i] = item
+		result[i].KnowledgeIDs = append([]string(nil), item.KnowledgeIDs...)
 		result[i].Steps = make(map[string]string, len(item.Steps))
 		if item.BeforeScore != nil {
 			value := *item.BeforeScore

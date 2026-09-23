@@ -3,9 +3,9 @@ package router
 import (
 	"OnCallAgent/internal/handler"
 	"OnCallAgent/internal/server/ai/agent/chat"
-	"OnCallAgent/internal/server/chatServer"
 	"OnCallAgent/internal/server/batch"
 	"OnCallAgent/internal/server/batchstate"
+	"OnCallAgent/internal/server/chatServer"
 	knowledgeindex "OnCallAgent/internal/server/knowledge_index"
 	"OnCallAgent/internal/server/plan"
 	"OnCallAgent/pkg/config"
@@ -57,18 +57,32 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	// 数据集接口与普通知识库上传分开：这里读取的是神经信号元数据，
 	// 不会把二进制波形当作文档切片写入向量数据库。
 	r.POST("/datasets/register", handler.RegisterDataset())
+	r.POST("/ppg/inspect", handler.ProcessPPG("inspect"))
+	r.POST("/ppg/analyze", handler.ProcessPPG("analyze"))
+	r.POST("/ppg/prepare", handler.ProcessPPG("prepare"))
+	r.GET("/ppg/:id/latest", handler.LatestPPG())
 	r.POST("/bids/browse", handler.BrowseBIDS())
 	r.GET("/datasets/:id", handler.GetDataset())
 	r.PUT("/datasets/:id/structure", handler.ConfirmDatasetStructure())
+	r.PUT("/datasets/:id/labels", handler.AttachDatasetLabels())
+	r.GET("/datasets/:id/labels", handler.GetDatasetLabels())
+	r.DELETE("/datasets/:id/labels", handler.DeleteDatasetLabels())
 	r.GET("/datasets/:id/preview", handler.PreviewDataset())
 	r.GET("/datasets/:id/signal", handler.SignalWindow())
 	r.GET("/datasets/:id/analysis/latest", handler.LatestDatasetAnalysis())
 	r.GET("/datasets/:id/analysis/events", handler.AnalysisEvents())
 	r.GET("/datasets/:id/derivatives", handler.DatasetDerivatives())
 	r.POST("/datasets/:id/analyze", handler.AnalyzeDataset())
+	r.POST("/datasets/:id/sleep/stage", handler.StageSleepDataset())
+	r.GET("/datasets/:id/sleep/stages/latest", handler.LatestSleepStages())
 	if provider, ok := memory.(interface{ BatchStore() *batchstate.Store }); ok {
 		batches := batch.New(provider.BatchStore())
-		r.POST("/batches", handler.CreateBatch(batches)); r.GET("/batches", handler.ListBatches(batches)); r.GET("/batches/:id", handler.GetBatch(batches)); r.POST("/batches/:id/pause", handler.PauseBatch(batches)); r.POST("/batches/:id/resume", handler.ResumeBatch(batches)); r.DELETE("/batches/:id", handler.DeleteBatch(batches))
+		r.POST("/batches", handler.CreateBatch(batches))
+		r.GET("/batches", handler.ListBatches(batches))
+		r.GET("/batches/:id", handler.GetBatch(batches))
+		r.POST("/batches/:id/pause", handler.PauseBatch(batches))
+		r.POST("/batches/:id/resume", handler.ResumeBatch(batches))
+		r.DELETE("/batches/:id", handler.DeleteBatch(batches))
 	}
 	//运维
 	planer := plan.NewPlanServer(*config, model, loger, retriever)

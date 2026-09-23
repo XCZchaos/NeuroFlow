@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http://localhost:8819 http://127.0.0.1:8819; object-src 'none'; base-uri 'none'">
-  <title>NeuroFlow · 神经信号工作台</title>
+  <meta name="application-version" content="0.2.0">
+  <title>NeuroFlow v0.2 · 神经信号工作台</title>
   <link rel="stylesheet" href="styles.css">
   <!-- 新视觉主题单独维护，便于修改颜色、间距和组件外观。 -->
   <link rel="stylesheet" href="theme.css">
@@ -14,6 +15,12 @@
   <link rel="stylesheet" href="import-progress.css">
   <link rel="stylesheet" href="model-settings.css">
   <link rel="stylesheet" href="help-view.css">
+  <link rel="stylesheet" href="sleep-label.css">
+  <link rel="stylesheet" href="ppg-view.css">
+  <link rel="stylesheet" href="workspace-pages.css">
+  <link rel="stylesheet" href="component-context.css">
+  <link rel="stylesheet" href="agent-stream.css">
+  <script defer src="agent-stream.js"></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -21,15 +28,15 @@
     <div class="workspace"><span class="workspace-icon">N</span><div>我的研究空间<small>本地工作区</small></div><span class="muted">⌄</span></div>
     <div class="nav-label">工作空间</div>
     <nav>
-      <button class="nav-item active" data-view="workspace"><span>▦</span>预处理工作台</button>
+      <button class="nav-item active" data-view="eeg"><span>▦</span><span class="i18n-text" data-i18n="nav.eeg">EEG 脑电预处理</span></button>
+      <button class="nav-item" data-view="meg"><span>◈</span><span class="i18n-text" data-i18n="nav.meg">MEG 脑磁预处理</span></button>
+      <button class="nav-item" data-view="fnirs"><span>◉</span><span class="i18n-text" data-i18n="nav.fnirs">fNIRS 近红外预处理</span></button>
       <button class="nav-item" data-view="datasets"><span>▱</span>数据管理 <b id="dataset-count">0</b></button>
       <button class="nav-item" data-view="history"><span>◷</span>运行记录</button>
       <button class="nav-item" data-view="sessions"><span>◫</span>长期对话</button>
+      <button class="nav-item" data-view="ppg"><span>∿</span><span class="i18n-text" data-i18n="nav.ppg">PPG 信号处理</span></button>
+      <button class="nav-item" data-view="sleep"><span>☾</span><span class="i18n-text" data-i18n="nav.sleep">睡眠标注</span></button>
     </nav>
-    <div class="nav-label template-label">处理模板 <span>03</span></div>
-    <button class="template" data-mode="EEG"><i class="dot green"></i>EEG · 脑电</button>
-    <button class="template" data-mode="MEG"><i class="dot violet"></i>MEG · 脑磁</button>
-    <button class="template" data-mode="fNIRS"><i class="dot amber"></i>fNIRS · 近红外</button>
     <div class="local-card"><span class="local-symbol">⌁</span><strong>数据留在本地</strong><p>原始文件不会上传。连接 Agent 时，仅发送你的对话与模态信息。</p><span class="local-tag">LOCAL FIRST</span></div>
     <button class="nav-item settings-trigger"><span>⚙</span>连接设置</button>
     <div class="profile"><span class="avatar">研</span><div>研究者<small>个人工作区</small></div><span class="profile-dot"></span></div>
@@ -42,7 +49,7 @@
         <div class="mode-row"><div class="segmented" role="group" aria-label="数据模态"><button class="selected" data-mode="EEG">EEG <span>脑电</span></button><button data-mode="MEG">MEG <span>脑磁</span></button><button data-mode="fNIRS">fNIRS <span>近红外</span></button></div><span class="subtle">模板可编辑 · 全程保留配置</span></div>
         <div class="workspace-grid">
           <div class="main-column">
-            <section class="card dataset-card is-empty" id="dropzone"><div class="section-heading"><h2><span class="step-number">01</span> 数据集</h2><span class="pill neutral" id="source-badge">未导入</span></div><div class="dataset-body"><div class="file-icon">＋</div><div class="file-details"><strong id="file-name">尚未选择数据</strong><p id="file-description">导入本地脑电、脑磁或近红外文件后，系统会自动识别格式和元数据。</p></div><button class="button light" id="change-file">导入数据</button></div><div class="metadata" hidden><div><span>通道数</span><strong id="meta-channels">—</strong></div><div><span>采样率</span><strong id="meta-rate">—</strong></div><div><span>记录时长</span><strong id="meta-duration">—</strong></div><div><span>数据格式</span><strong id="meta-format">—</strong></div></div><div class="drop-hint" id="format-hint">点击导入，或将受支持的数据文件拖到这里</div></section>
+            <section class="card dataset-card is-empty" id="dropzone"><div class="section-heading"><h2><span class="step-number">01</span> 数据集</h2><span class="pill neutral" id="source-badge">未导入</span></div><div class="dataset-body"><div class="file-icon">＋</div><div class="file-details"><strong id="file-name">尚未选择数据</strong><p id="file-description">导入本地脑电、脑磁或近红外文件后，系统会自动识别格式和元数据。</p></div><button class="button light" id="change-file">导入数据</button></div><div class="dataset-labels" id="dataset-labels" hidden><div><strong id="label-title">配套标签</strong><small id="label-summary">尚未导入事件或阶段标签</small></div><div class="dataset-label-actions"><button class="button light" id="manage-labels" type="button">编辑</button><button class="button light" id="remove-labels" type="button">删除</button><button class="button light" id="import-labels" type="button">导入标签</button></div></div><div class="metadata" hidden><div><span>通道数</span><strong id="meta-channels">—</strong></div><div><span>采样率</span><strong id="meta-rate">—</strong></div><div><span>记录时长</span><strong id="meta-duration">—</strong></div><div><span>数据格式</span><strong id="meta-format">—</strong></div></div><div class="drop-hint" id="format-hint">点击导入，或将受支持的数据文件拖到这里</div></section>
             <section class="card structure-card" id="structure-card" hidden><div class="section-heading"><h2>数据结构确认</h2><span class="pill neutral" id="structure-confidence">—</span></div><div id="structure-summary" class="structure-summary"></div><button class="button light" id="review-structure">检查并确认</button></section>
             <section class="card pipeline-card"><div class="section-heading"><h2><span class="step-number">02</span> 预处理流程 <span class="count" id="step-count">5 步</span></h2><div><button class="text-button" id="add-pipeline-step">＋ 添加步骤</button><button class="text-button" id="reset-pipeline">↺ 重置模板</button></div></div><div class="pipeline-description">按顺序执行处理步骤。点击参数可编辑，开关控制是否启用。</div><div id="pipeline"></div><div class="pipeline-footer"><span><i class="dot green"></i><span id="enabled-count">5 个步骤已启用</span></span><button class="text-button" id="export-config">↓ 导出配置</button></div></section>
             <section class="card signal-card"><div class="section-heading"><h2><span class="step-number">03</span> 信号预览 <span class="pill neutral">合成演示</span></h2><div class="signal-tabs"><button class="selected" data-signal="raw">原始</button><button data-signal="processed">处理示意</button></div></div><div class="signal-info"><span id="signal-caption">8 个示例通道 · 10 秒窗口</span><span id="signal-unit">振幅 / μV</span></div><canvas id="signal-canvas" aria-label="合成信号波形预览，并非导入文件的真实信号"></canvas><div class="chart-footer"><span>演示波形不代表导入文件内容或处理效果</span><span>时间 / s</span></div><div class="signal-navigation"><button class="icon-button" id="signal-zoom-out" disabled aria-label="缩小时间范围">−</button><div><input id="signal-position" type="range" min="0" max="0" value="0" step="0.1" disabled><span id="signal-window-label">0–10 s</span></div><button class="icon-button" id="signal-zoom-in" disabled aria-label="放大时间范围">＋</button></div><div class="channel-detail"><div class="channel-detail-head"><div><strong data-i18n="channel.title">通道详情</strong><span id="channel-source" data-i18n="channel.awaiting">导入数据后可查看真实通道</span></div><div class="channel-actions"><label for="channel-select" class="sr-only" data-i18n="channel.selectLabel">选择通道</label><select id="channel-select" disabled><option>—</option></select><button class="button light" id="export-channel" disabled data-i18n="channel.export">导出 CSV</button></div></div><div class="channel-stats"><div><span data-i18n="channel.samples">采样点</span><strong id="channel-samples">—</strong></div><div><span data-i18n="channel.rate">显示采样率</span><strong id="channel-rate">—</strong></div><div><span data-i18n="channel.min">最小值</span><strong id="channel-min">—</strong></div><div><span data-i18n="channel.max">最大值</span><strong id="channel-max">—</strong></div><div><span data-i18n="channel.mean">均值</span><strong id="channel-mean">—</strong></div><div><span data-i18n="channel.rms">RMS</span><strong id="channel-rms">—</strong></div></div></div></section>
@@ -65,6 +72,6 @@
   <!-- i18n 必须先于业务脚本加载，后续新增功能统一调用 window.NeuroI18n。 -->
   <script src="i18n.js"></script>
   <script src="import-review.js"></script>
-  <script src="channel-layout.js"></script><script src="signal-window.js"></script><script src="model-settings.js"></script><script src="help-view.js"></script><script src="app.js"></script><script src="advanced-ui.js"></script>
+  <script src="channel-layout.js"></script><script src="signal-window.js"></script><script src="model-settings.js"></script><script src="help-content.js"></script><script src="help-view.js"></script><script src="sleep-label.js"></script><script src="ppg-view.js"></script><script src="workspace-pages.js"></script><script src="component-context.js"></script><script src="app.js"></script><script src="advanced-ui.js"></script>
 </body>
 </html>

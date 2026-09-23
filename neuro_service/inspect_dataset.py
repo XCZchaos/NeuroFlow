@@ -94,6 +94,12 @@ def main() -> int:
         types = raw.get_channel_types()
         counts = {kind: types.count(kind) for kind in sorted(set(types))}
         annotations = getattr(raw, "annotations", None)
+        # External companion labels are attached after the format adapter has
+        # produced its initial structure report. Reflect their real, normalized
+        # descriptions in top-level metadata so the UI and Agent can discover
+        # the events without opening the local label file.
+        if config.get('event_dictionary') is None and annotations is not None:
+            structure['event_dictionary'] = sorted(set(annotations.description))
         size = path.stat().st_size if path.is_file() else None
         # 这里只输出能由文件直接证明的事实。bad_channels 是文件中原本标记的坏道，
         # 并不代表系统已经运行了自动坏道检测。

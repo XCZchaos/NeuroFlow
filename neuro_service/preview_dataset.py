@@ -37,7 +37,11 @@ def main() -> int:
         raw = load_bids_raw(path)[0] if bids else (load_structured_raw(path)[0] if suffix in STRUCTURED_EXTENSIONS else getattr(mne.io, reader)(str(path), preload=False, verbose="ERROR"))
         raw = apply_config(raw, path)
         if modality == "EEG":
-            picks = mne.pick_types(raw.info, eeg=True, meg=False, fnirs=False, exclude=[])
+            # Sleep scoring needs the synchronized EEG/EOG/EMG window. The
+            # reserved selector is created by the local UI, never a file name.
+            sleep_view = requested_channel == "__sleep__"
+            picks = mne.pick_types(raw.info, eeg=True, eog=sleep_view, emg=sleep_view,
+                                   meg=False, fnirs=False, exclude=[])
             scale, unit = 1e6, "µV"
         elif modality == "MEG":
             picks = mne.pick_types(raw.info, eeg=False, meg=True, fnirs=False, exclude=[])
@@ -50,7 +54,7 @@ def main() -> int:
         if not len(picks):
             raise ValueError(f"dataset has no {modality} channels")
         available_names = [raw.ch_names[index] for index in picks]
-        if requested_channel:
+        if requested_channel and requested_channel != "__sleep__":
             if requested_channel not in available_names:
                 raise ValueError(f"channel does not exist: {requested_channel}")
             picks = np.asarray([raw.ch_names.index(requested_channel)], dtype=int)

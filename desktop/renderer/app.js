@@ -58,6 +58,44 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const persistedSession=localStorage.getItem('neuroflow-session-id');
 const persistedResponseMode=localStorage.getItem('neuroflow-response-mode')==='deep'?'deep':'quick';
 const state = { mode:'EEG', responseMode:persistedResponseMode, steps:[], datasets:[], current:null, history:[], sessions:[], running:false, sending:false, importStatus:null, processed:false, analysis:null, selectedChannel:null, singleChannel:false, signalWindow:{start:0,duration:10,preview:null,loading:false}, backend:'demo', url:'http://localhost:8819', session:persistedSession || globalThis.crypto?.randomUUID?.() || `session-${Date.now()}`, streamController:null };
+
+// Narrow read-only bridge for specialist subpages. It exposes verified metadata
+// and the existing local signal endpoint without exposing the mutable UI state.
+globalThis.NeuroFlowWorkspace = Object.freeze({
+  componentState:(id,detail)=>agentComponentState(id,detail),
+  backendURL:()=>state.url,
+  snapshot:()=>state.current?.datasetId?{datasetId:state.current.datasetId,name:state.current.name,url:state.url,inspection:structuredClone(state.current.inspection||{})}:null,
+  signalWindow:async(start,duration,purpose='',signal)=>{
+    if(!state.current?.datasetId)throw Error('No parsed dataset is selected');
+    const query=new URLSearchParams({source:'raw',start:String(start),duration:String(duration)});
+    if(purpose==='sleep')query.set('channel','__sleep__');
+    const requestSignal=signal&&AbortSignal.any?AbortSignal.any([signal,AbortSignal.timeout(45000)]):signal||AbortSignal.timeout(45000);
+    const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/signal?${query}`,{signal:requestSignal});
+    const data=await response.json();if(!response.ok)throw Error(data.message||`HTTP ${response.status}`);return data;
+  },
+	// Specialist pages submit through the existing composer pipeline. This
+	// preserves the same message renderer, history, response mode, cancellation,
+	// SSE handling and ReAct tool execution used by the preprocessing workspace.
+	sendAgentMessage:async (question,options)=>sendMessage(question,options),
+	latestSleepStages:async()=>{
+		if(!state.current?.datasetId)return null;
+		const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/sleep/stages/latest`,{signal:AbortSignal.timeout(30000)});
+		if(response.status===404)return null;const data=await response.json();if(!response.ok)throw Error(data.message||`HTTP ${response.status}`);return data;
+	},
+	configureAgent:({context,placeholder,suggestions}={})=>{
+		if(context)$('#context-mode').textContent=context;
+		if(placeholder)$('#chat-input').placeholder=placeholder;
+		if(Array.isArray(suggestions))$$('.suggestions [data-prompt]').forEach((button,index)=>{const item=suggestions[index];if(item){button.dataset.prompt=item.prompt;button.textContent=item.label;}});
+	},
+	restoreAgent:()=>{
+		$('#context-mode').textContent=i18n.getLocale()==='en'?`${state.mode} preprocessing`:`${state.mode} 预处理`;
+		$('#chat-input').placeholder=t('chat.placeholder');
+		const defaults=i18n.getLocale()==='en'?[{prompt:'Explain the current preprocessing pipeline',label:'Explain pipeline ↗'},{prompt:'What quality checks should follow data import?',label:'Quality checks ↗'}]:[{prompt:'解释当前预处理流程',label:'解释当前流程 ↗'},{prompt:'数据导入后应做哪些质量检查？',label:'质量检查建议 ↗'}];
+		$$('.suggestions [data-prompt]').forEach((button,index)=>{button.dataset.prompt=defaults[index].prompt;button.textContent=defaults[index].label;});
+	},
+	notify:message=>toast(message),
+  reviewStructure:()=>$('#review-structure')?.click()
+});
 localStorage.setItem('neuroflow-session-id',state.session);
 let toastTimer;
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').hidden = true, 4000); }
@@ -86,11 +124,21 @@ function renderImportStatus(){
 }
 function setMode(mode) {
   if(state.running || state.sending) return toast(t('toast.waitSwitch'));
+  if(!templates[mode])return;
+  // Each modality keeps its own selected recording, edited pipeline and viewport.
+  // References are intentional: completed analysis is attached to that same file.
+  state.modePages ||= {};
+  if(state.steps.length && state.mode!==mode){
+    state.modePages[state.mode]={steps:state.steps,current:state.current,processed:state.processed,analysis:state.analysis,selectedChannel:state.selectedChannel,singleChannel:state.singleChannel,signalWindow:{...state.signalWindow,loading:false},importStatus:state.importStatus};
+  }
+  const saved=state.mode!==mode?state.modePages[mode]:null;
+  if(state.mode!==mode){signalPrefetch?.abort();state.importStatus=null;}
   state.mode=mode; state.steps=templates[mode].steps.map(([name,english,params]) => ({key:stepKeyByName[name]||name,name,english,params:clone(params),enabled:true,executable:mode==='EEG'}));
   state.current=state.datasets.find(item=>item.mode===mode)||null;
   $$('.segmented [data-mode]').forEach(button=>button.classList.toggle('selected',button.dataset.mode===mode));
   $('#context-mode').textContent=i18n.getLocale()==='en'?`${mode} preprocessing`:`${mode} 预处理`; state.processed=false;state.analysis=state.current?.analysis||null;state.selectedChannel=null;state.singleChannel=false;state.signalWindow={start:0,duration:10,preview:null,loading:false};
   $$('.signal-tabs button').forEach(button=>button.classList.toggle('selected',button.dataset.signal==='raw'));
+  if(saved){Object.assign(state,saved);$$('.signal-tabs button').forEach(button=>button.classList.toggle('selected',button.dataset.signal===(state.processed?'processed':'raw')));}
   renderDataset(); renderPipeline(); drawSignal();
 }
 function renderDataset() {
@@ -120,6 +168,76 @@ function renderDataset() {
   renderChannelLayout();
   renderQuality();
   renderImportStatus();
+	const labelPanel=$('#dataset-labels'),labelButton=$('#import-labels');
+	if(labelPanel&&labelButton){
+		labelPanel.hidden=!file;labelButton.disabled=!file?.datasetId||state.running;
+		const config=meta?.structure_report?.import_config||{};
+		const labelName=file?.labelName||config.label_source_name;
+		const labelCount=Number(file?.labelCount??config.external_annotations?.length??0);
+		$('#label-title').textContent=english?'Companion labels':'配套标签';
+		$('#label-summary').textContent=labelCount
+			?(english?`${labelName||'Label file'} · ${labelCount} annotations`:`${labelName||'标签文件'} · ${labelCount} 条标注`)
+			:(english?'CSV / TSV / JSON · onset or sample + label':'CSV / TSV / JSON · 时间或采样点 + 标签');
+		labelButton.textContent=english?(labelCount?'Replace labels':'Import labels'):(labelCount?'更换标签':'导入标签');
+		labelButton.title=english?'Supports BIDS events.tsv and MNE-style annotation tables':'支持 BIDS events.tsv 与 MNE 注释表结构';
+		$('#manage-labels').hidden=!labelCount;$('#remove-labels').hidden=!labelCount;
+		$('#manage-labels').textContent=english?'Edit':'编辑';$('#remove-labels').textContent=english?'Delete':'删除';
+	}
+}
+
+function labelDialogShell(title){
+	let dialog=$('#label-dialog');if(!dialog){dialog=document.createElement('dialog');dialog.id='label-dialog';dialog.className='label-dialog';document.body.append(dialog);}
+	dialog.returnValue='';dialog.replaceChildren();const heading=element('div','section-heading');heading.append(element('h2','',title));const close=element('button','button light',i18n.getLocale()==='en'?'Close':'关闭');close.type='button';close.onclick=()=>dialog.close();heading.append(close);dialog.append(heading);return dialog;
+}
+
+function chooseSampleOrigin(){
+	return new Promise(resolve=>{
+		const english=i18n.getLocale()==='en',dialog=labelDialogShell(english?'Import companion labels':'导入配套标签');
+		dialog.append(element('p','',english?'Choose how sample indices in the label file are numbered. This does not affect onset values expressed in seconds.':'选择标签文件中采样点序号的起点；使用秒数的 onset/time 字段不受影响。'));
+		const label=element('label','field-label',english?'Sample index origin':'采样点序号起点'),select=element('select');[['0',english?'Zero-based: first sample = 0':'零起点：第一个采样点 = 0'],['1',english?'One-based: first sample = 1':'一起点：第一个采样点 = 1']].forEach(([value,text])=>{const option=element('option','',text);option.value=value;select.append(option);});label.append(select);dialog.append(label);
+		const choose=element('button','button primary',english?'Choose label file':'选择标签文件');choose.type='button';choose.onclick=()=>{const value=Number(select.value);dialog.close(String(value));};dialog.append(choose);
+		let completed=false;dialog.addEventListener('close',()=>{if(completed)return;completed=true;resolve(dialog.returnValue===''?null:Number(dialog.returnValue));},{once:true});dialog.showModal();
+	});
+}
+
+async function importDatasetLabels(){
+	if(state.running||state.sending)return toast(t('toast.wait'));
+	if(state.backend!=='backend')return toast(t('toast.connectBackend'));
+	if(!state.current?.datasetId)return toast(i18n.getLocale()==='en'?'Import a signal dataset first':'请先导入信号数据');
+	if(!globalThis.desktop?.selectLabelFile)return toast(i18n.getLocale()==='en'?'Label file picker is unavailable':'当前环境无法选择标签文件');
+	const sampleOrigin=await chooseSampleOrigin();if(sampleOrigin===null)return;
+	const path=await globalThis.desktop.selectLabelFile();if(!path)return;
+	const button=$('#import-labels');button.disabled=true;button.textContent=i18n.getLocale()==='en'?'Validating…':'正在校验…';
+	try{
+		await ensureDatasetRegistration(state.current);
+		const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/labels`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({path,sample_origin:sampleOrigin}),signal:AbortSignal.timeout(95000)});
+		const data=await response.json().catch(()=>({message:`HTTP ${response.status}`}));
+		if(!response.ok)throw new Error(data.message||data.code||`HTTP ${response.status}`);
+		state.current.inspection=data.inspection;state.current.labelName=data.label_source_name;state.current.labelCount=data.label_count;state.current.labelReport=data.validation_report;
+		state.current.analysis=null;state.analysis=null;state.processed=false;state.signalWindow.preview=null;
+		try{state.current.preview=await loadRawPreview(state.current.datasetId);}catch(_error){}
+		renderDataset();drawSignal();renderLists();
+		const warningCount=data.validation_report?.warnings?.length||0;toast(i18n.getLocale()==='en'?`Imported ${data.label_count} annotations${warningCount?` with ${warningCount} warning(s)`:''}`:`已导入 ${data.label_count} 条标签${warningCount?`，有 ${warningCount} 项需复核`:''}`);
+	}catch(error){toast(i18n.getLocale()==='en'?`Label import failed: ${error.message}`:`标签导入失败：${error.message}`);renderDataset();}
+}
+
+async function openLabelManager(){
+	if(!state.current?.datasetId)return;
+	const english=i18n.getLocale()==='en',dialog=labelDialogShell(english?'Edit annotations':'编辑标签');
+	const status=element('p','settings-note',english?'Loading annotations…':'正在读取标签…');dialog.append(status);dialog.showModal();
+	try{
+		const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/labels`,{signal:AbortSignal.timeout(30000)}),data=await response.json();if(!response.ok)throw Error(data.message||`HTTP ${response.status}`);
+		dialog.replaceChildren(dialog.firstChild);const note=element('p','',english?'Edit onset and duration in seconds. Changes are validated against the recording before saving.':'起始时间和持续时间单位为秒；保存前会根据记录时长重新验证。');status.textContent='';dialog.append(note,status);
+		const table=element('table','review-table label-edit-table'),body=document.createElement('tbody');table.innerHTML=`<thead><tr><th>${english?'Onset (s)':'起始（秒）'}</th><th>${english?'Duration (s)':'持续（秒）'}</th><th>${english?'Label':'标签'}</th><th></th></tr></thead>`;table.append(body);dialog.append(table);
+		const annotations=(data.annotations||[]).map(item=>({...item})),pageSize=100;let page=0;const pager=element('div','label-pager'),previous=element('button','button light','←'),pageLabel=element('span',''),next=element('button','button light','→');previous.type=next.type='button';pager.append(previous,pageLabel,next);dialog.append(pager);
+		const renderPage=()=>{body.replaceChildren();const pages=Math.max(1,Math.ceil(annotations.length/pageSize));page=Math.max(0,Math.min(pages-1,page));annotations.slice(page*pageSize,(page+1)*pageSize).forEach((item,offset)=>{const index=page*pageSize+offset,row=document.createElement('tr');const onset=element('input');onset.type='number';onset.step='any';onset.min='0';onset.value=String(item.onset??0);onset.oninput=()=>item.onset=Number(onset.value);const duration=element('input');duration.type='number';duration.step='any';duration.min='0';duration.value=String(item.duration??0);duration.oninput=()=>item.duration=Number(duration.value);const description=element('input');description.value=item.description||'';description.maxLength=200;description.oninput=()=>item.description=description.value;const remove=element('button','button light','×');remove.type='button';remove.onclick=()=>{annotations.splice(index,1);renderPage();};[onset,duration,description,remove].forEach(control=>{const cell=document.createElement('td');cell.append(control);row.append(cell);});body.append(row);});pageLabel.textContent=english?`Page ${page+1}/${pages} · ${annotations.length} annotations`:`第 ${page+1}/${pages} 页 · 共 ${annotations.length} 条`;previous.disabled=page===0;next.disabled=page>=pages-1;};previous.onclick=()=>{page--;renderPage();};next.onclick=()=>{page++;renderPage();};renderPage();
+		const actions=element('div','label-dialog-actions'),add=element('button','button light',english?'+ Add annotation':'+ 添加标签'),save=element('button','button primary',english?'Validate and save':'验证并保存');add.type=save.type='button';add.onclick=()=>{annotations.push({onset:0,duration:0,description:''});page=Math.floor((annotations.length-1)/pageSize);renderPage();};save.onclick=async()=>{try{save.disabled=true;const result=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/labels`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({annotations,label_source_name:data.label_source_name||'edited-labels',sample_origin:data.sample_origin||0}),signal:AbortSignal.timeout(95000)});const updated=await result.json();if(!result.ok)throw Error(updated.message||`HTTP ${result.status}`);state.current.inspection=updated.inspection;state.current.labelCount=updated.label_count;state.current.labelName=updated.label_source_name;state.current.labelReport=updated.validation_report;state.current.analysis=null;state.analysis=null;dialog.close();renderDataset();drawSignal();toast(english?'Annotations saved':'标签已保存');}catch(error){status.textContent=error.message;}finally{save.disabled=false;}};actions.append(add,save);dialog.append(actions);status.textContent=(data.validation_report?.warnings||[]).join('\n');
+	}catch(error){status.textContent=error.message;}
+}
+
+async function removeDatasetLabels(){
+	const english=i18n.getLocale()==='en';if(!state.current?.datasetId)return;if(!confirm(english?'Delete imported companion labels? Native annotations in the signal file will remain.':'删除导入的配套标签吗？信号文件原有标注会保留。'))return;
+	try{const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/labels`,{method:'DELETE',signal:AbortSignal.timeout(95000)}),data=await response.json();if(!response.ok)throw Error(data.message||`HTTP ${response.status}`);state.current.inspection=data.inspection;state.current.labelCount=0;state.current.labelName='';state.current.labelReport=null;state.current.analysis=null;state.analysis=null;renderDataset();drawSignal();toast(english?'Imported labels deleted':'已删除导入标签');}catch(error){toast(error.message);}
 }
 
 function renderQuality(){
@@ -134,6 +252,7 @@ function renderPipeline() {
   const list=$('#pipeline'); list.replaceChildren();
   state.steps.forEach((step,index)=>{
     const row=element('div',`pipeline-step${step.enabled?'':' disabled'}`);
+    row.dataset.agentStepKey=step.key;
     row.append(element('span','step-index',String(index+1).padStart(2,'0')));
     const content=element('div','step-content'), top=element('div','step-top');
     top.append(element('strong','',i18n.domain(step.name)),element('small','',step.english));
@@ -147,7 +266,13 @@ function renderPipeline() {
   }); updateCount();
 }
 function updateCount() { const count=state.steps.filter(step=>step.enabled).length;$('#enabled-count').textContent=t('steps.enabled',{count});$('#step-count').textContent=t('steps.count',{count:state.steps.length});$('#run-button').disabled=state.running||!count; }
-function setResponseMode(mode){state.responseMode=mode==='deep'?'deep':'quick';localStorage.setItem('neuroflow-response-mode',state.responseMode);$$('[data-response-mode]').forEach(button=>button.classList.toggle('selected',button.dataset.responseMode===state.responseMode));$('#response-mode-hint').textContent=t(state.responseMode==='deep'?'response.deepHint':'response.quickHint');}
+function setResponseMode(mode){
+  state.responseMode=mode==='deep'?'deep':'quick';localStorage.setItem('neuroflow-response-mode',state.responseMode);
+  $$('[data-response-mode]').forEach(button=>{const selected=button.dataset.responseMode===state.responseMode;button.classList.toggle('selected',selected);button.setAttribute('aria-pressed',String(selected));button.title=t(button.dataset.responseMode==='deep'?'response.deepDescription':'response.quickDescription');});
+  $('#response-mode-hint').textContent=t(state.responseMode==='deep'?'response.deepHint':'response.quickHint');
+  let note=$('#response-mode-description');if(!note){note=element('p','response-mode-description');note.id='response-mode-description';$('.response-mode').after(note);}
+  note.textContent=t(state.responseMode==='deep'?'response.deepDescription':'response.quickDescription');
+}
 function movePipelineStep(from,to){if(to<0||to>=state.steps.length||state.running)return;const [step]=state.steps.splice(from,1);state.steps.splice(to,0,step);renderPipeline();}
 function renderAlgorithmLibrary(){const list=$('#algorithm-list');list.replaceChildren();const catalog=algorithmCatalog[state.mode]||[];if(!catalog.length){list.append(element('p','empty',i18n.getLocale()==='en'?'This modality currently uses its template; more executable steps are being integrated.':'当前模态暂时使用模板，更多可执行步骤仍在接入。'));return;}catalog.forEach(item=>{const exists=state.steps.some(step=>step.key===item.key),row=element('div','algorithm-option'),details=element('div');details.append(element('strong','',i18n.getLocale()==='en'?item.english:item.name),element('small','',item.executable?t('pipeline.available'):(i18n.getLocale()==='en'?'Planned · not executable':'规划中 · 尚不可执行')));const button=element('button','button light',exists?t('pipeline.added'):t('pipeline.add'));button.type='button';button.disabled=exists||!item.executable;button.addEventListener('click',()=>{state.steps.push({...clone(item),enabled:true});renderPipeline();renderAlgorithmLibrary();});row.append(details,button);list.append(row);});}
 function formatBytes(bytes) { return bytes<1048576?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1048576).toFixed(1)} MB`; }
@@ -201,6 +326,7 @@ async function importPaths(paths) {
     } catch(error) { failures.push(error.message);setImportStatus(state.importStatus?.stage||'parsing','failed',error.message); }
   }
   renderDataset();renderLists();drawSignal();
+  if(window.NeuroPages.modes[state.view]||(state.view==='sleep'&&state.mode!=='EEG'))setView('workspace');
   toast(accepted?`${t('toast.imported',{count:accepted})}${previewFailures.length?t('toast.previewFailed',{count:previewFailures.length}):''}${failures.length?t('toast.failedCount',{count:failures.length}):''}`:t('toast.readFailed',{error:failures[0]||(i18n.getLocale()==='en'?'Unknown error':'未知错误')}));
 }
 function importFiles(files) {
@@ -225,7 +351,27 @@ function renderLists() {
   [...state.history].reverse().forEach(run=>{const row=element('div','list-row'),details=element('div'),comparison=run.result?.quality_comparison,degraded=run.result?.audit_log?.filter(item=>item.status==='degraded').length||0;const quality=comparison?t('history.quality',{before:Number(comparison.before.score).toFixed(1),after:Number(comparison.after.score).toFixed(1),degraded}):'';details.append(element('strong','',t(run.real?'history.realComplete':'history.complete',{mode:run.mode,count:run.steps.length})),element('p','',`${run.time} · ${run.real?`${quality} · ${run.output?.file_name||t('history.processed')}`:t('history.noProcessing')}`));const button=element('button','button light',run.real&&run.output?.relative_path?t('action.locate'):t('action.export'));button.addEventListener('click',()=>run.real&&run.output?.relative_path&&globalThis.desktop?.showOutput?globalThis.desktop.showOutput(run.output.relative_path).catch(error=>toast(error.message)):download(run,`neuroflow-${run.mode}-run.json`));row.append(details,button);history.append(row);});
 	const sessions=$('#session-list');if(sessions){sessions.replaceChildren();if(!state.sessions.length)sessions.append(element('p','empty',t('session.empty')));state.sessions.forEach(item=>{const row=element('div',`list-row session-row${item.id===state.session?' current':''}`),details=element('div');details.append(element('strong','',item.title||t('session.untitled')),element('p','',`${item.dataset_id||t('session.noDataset')} · ${new Date(item.updated_at).toLocaleString()}`));const actions=element('div','session-actions'),open=element('button','button light',item.id===state.session?t('session.current'):t('session.open')),remove=element('button','button danger',t('session.delete'));open.disabled=item.id===state.session;open.addEventListener('click',()=>openSession(item.id));remove.addEventListener('click',()=>deleteSession(item.id));actions.append(open,remove);row.append(details,actions);sessions.append(row);});}
 }
-function setView(view) { for(const name of ['workspace','datasets','history','sessions','help'])$(`#${name}-view`).hidden=name!==view;$$('.nav-item[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));const keys={workspace:'nav.preprocessing',datasets:'nav.datasets',history:'nav.history',sessions:'nav.sessions',help:'nav.help'};const label=view==='help'?(i18n.getLocale()==='en'?'User guide':'使用说明'):t(keys[view]);$('#breadcrumb').textContent=label;$('#page-title').textContent=view==='workspace'?t('view.title'):label;$('.page-heading').hidden=view==='help';$('#import-top').hidden=view==='help';renderLists();if(view==='workspace')requestAnimationFrame(drawSignal); }
+function setView(view) {
+  const modes=window.NeuroPages.modes;
+  if(view==='workspace')view=Object.keys(modes).find(key=>modes[key]===state.mode)||'eeg';
+  if(!['eeg','meg','fnirs','datasets','history','sessions','sleep','ppg','help'].includes(view))return;
+  // Lock context changes during execution, rather than letting an in-flight tool
+  // repaint another page's dataset. Same-page locale refresh remains permitted.
+  if(state.view&&state.view!==view&&(state.sending||state.running||state.importStatus?.status==='running'||window.NeuroPPG?.isBusy?.()))return toast(t('toast.waitSwitch'));
+  if(modes[view]&&state.mode!==modes[view])setMode(modes[view]);
+  if(view==='sleep'&&state.mode!=='EEG')setMode('EEG');
+  state.view=view;
+  window.NeuroComponents?.pageChanged(view,['help','sessions','ppg'].includes(view)?'':state.current?.datasetId);
+  for(const name of ['eeg','meg','fnirs','datasets','history','sessions','sleep','ppg','help'])$(`#${name}-view`).hidden=name!==view;
+  $('#workspace-view').hidden=!modes[view];
+  window.NeuroPages.mount(view);
+  $$('.nav-item[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));
+  const label=window.NeuroPages.pageLabel(view);$('#breadcrumb').textContent=label;$('#page-title').textContent=label;
+  const ownsHeading=['help','sleep','ppg'].includes(view);$('.page-heading').hidden=ownsHeading;$('#import-top').hidden=ownsHeading;
+  renderLists();if(modes[view])requestAnimationFrame(drawSignal);
+  if(view==='sleep')window.NeuroSleep?.activate();if(view==='ppg')window.NeuroPPG?.activate();
+  window.NeuroPages.configure(view);
+}
 
 async function memoryRequest(path,options={}){const response=await fetch(`${state.url}${path}`,{headers:{'Content-Type':'application/json',...(options.headers||{})},...options});const data=response.status===204?null:await response.json().catch(()=>({message:`HTTP ${response.status}`}));if(!response.ok)throw new Error(data?.message||`HTTP ${response.status}`);return data;}
 async function ensureSession(){if(state.backend!=='backend')return;await memoryRequest('/sessions',{method:'POST',body:JSON.stringify({id:state.session,title:t('session.untitled')})});await loadSessions();}
@@ -324,7 +470,7 @@ function appendThinkingMessage() {
   const message=appendMessage('assistant','');
   message.row.classList.add('thinking');
   const indicator=element('div','thinking-indicator');
-  indicator.append(element('span'),element('span'),element('span'),element('em','',t('agent.thinking')));
+  indicator.append(element('span'),element('span'),element('span'),element('em','',i18n.getLocale()==='en'?'Waiting for response text':'等待回复正文'));
   message.body.replaceChildren(indicator);
   return message;
 }
@@ -337,15 +483,21 @@ function updateAssistantMessage(message,text) {
 
 // 只有用户明确要求执行信号处理时才显示操作进度，普通知识问答仍使用简洁的思考状态。
 // 这些状态表示当前请求所处阶段；最终是否真正执行，以后端生成的新 analysis_id 为准。
-function isAgentOperationRequest(text){return /预处理|滤波|陷波|重参考|坏道|插值|去伪迹|伪迹|\bICA\b|保存.{0,8}(文件|结果)|运行.{0,6}(流程|处理)|执行.{0,8}(分析|处理)|preprocess|filter|notch|bad channel|artifact|save.{0,12}(file|result)|run.{0,8}(pipeline|analysis)/i.test(text);}
-function showAgentOperationProgress(message,hasDataset){
-  const labels=hasDataset?[t('agent.progressPlan'),t('agent.progressRead'),t('agent.progressExecute'),t('agent.progressFinalize')]:[t('agent.progressPlan'),t('agent.progressAwaitDataset')];
-  const panel=element('div','agent-operation'),title=element('div','agent-operation-title'),list=element('div','agent-operation-steps');
-  title.append(element('span','agent-operation-spinner'),document.createTextNode(t('agent.operating')));panel.append(title,list);message.body.replaceChildren(panel);
-  let active=0;
-  const paint=()=>{list.replaceChildren(...labels.map((label,index)=>{const row=element('div',`agent-operation-step ${index<active?'done':index===active?'active':'pending'}`);row.append(element('span','operation-state',index<active?'✓':index===active?'●':'○'),document.createTextNode(label));return row;}));$('#messages').scrollTop=$('#messages').scrollHeight;};
-  paint();const timer=setInterval(()=>{if(active<labels.length-1){active++;paint();}},hasDataset?2600:1800);
-  return ()=>clearInterval(timer);
+function isAgentOperationRequest(text){return /预处理|滤波|陷波|重参考|坏道|插值|去伪迹|伪迹|覆盖.{0,10}(标签|标注)|睡眠.{0,8}(分期|标注|打标)|自动.{0,6}(分期|标注|打标)|\bICA\b|保存.{0,8}(文件|结果)|运行.{0,6}(流程|处理)|执行.{0,8}(分析|处理)|preprocess|filter|notch|bad channel|artifact|sleep.{0,8}(stag|scor|label)|automatic.{0,8}(stag|scor|label)|save.{0,12}(file|result)|run.{0,8}(pipeline|analysis)/i.test(text);}
+// Explicit sleep-staging requests are actions, not open-ended questions. The
+// outer workflow executes the validated local tool first, then lets the same
+// Agent explain the real result. This prevents a ReAct turn from stopping after
+// saying "I will call the tool" without actually doing so.
+function isSleepStagingRequest(text){return /睡眠.{0,14}(自动分期|分期工具|自动标注|自动打标|候选标签|覆盖|重打|重新标注)|(?:自动|覆盖|重打|重新).{0,10}(睡眠分期|睡眠标注|睡眠标签|现有标签)|(?:sleep).{0,16}(stag|scor|label|overwrite|replace)/i.test(text);}
+function requestsLabelOverwrite(text){return /覆盖.{0,12}(标签|标注|分期)|(现有|已有).{0,8}(标签|标注|分期).{0,12}覆盖|重新.{0,8}(标注|打标|分期)|重打.{0,6}(标签|标注)|overwrite|replace.{0,8}(label|scor|stag)/i.test(text);}
+
+async function executeSleepStagingWorkflow(datasetId,overwriteExisting=false,signal){
+  const response=await fetch(`${state.url}/datasets/${encodeURIComponent(datasetId)}/sleep/stage`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(600000)]):AbortSignal.timeout(600000)});
+  const result=await response.json();if(!response.ok)throw Error(result.message||`HTTP ${response.status}`);
+  // The sleep page owns label provenance and review state. A DOM event keeps
+  // that specialist rendering out of the shared Agent implementation.
+  document.dispatchEvent(new CustomEvent('neuroflow:sleepstages',{detail:{result,overwriteExisting}}));
+  return result;
 }
 function appendAgentOutcome(message,result,expectedOperation){
   if(!expectedOperation)return;
@@ -362,26 +514,7 @@ function appendAgentOutcome(message,result,expectedOperation){
 
 // 解析 fetch 返回的 Server-Sent Events。每遇到一个完整事件就回调一次，
 // 支持 Gin 输出的 message、error 和 done 三种事件以及跨网络分片的数据。
-async function consumeSSE(response,onEvent) {
-  if(!response.body)throw new Error(t('error.streamingUnsupported'));
-  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
-  const dispatch=block=>{
-    let event='message';const data=[];
-    for(const line of block.split('\n')){
-      if(line.startsWith('event:'))event=line.slice(6).trim();
-      else if(line.startsWith('data:'))data.push(line.slice(5).replace(/^ /,''));
-    }
-    if(data.length)onEvent(event,data.join('\n'));
-  };
-  while(true){
-    const {value,done}=await reader.read();
-    buffer+=decoder.decode(value||new Uint8Array(),{stream:!done}).replace(/\r\n/g,'\n');
-    let boundary;
-    while((boundary=buffer.indexOf('\n\n'))>=0){const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);if(block.trim())dispatch(block);}
-    if(done)break;
-  }
-  if(buffer.trim())dispatch(buffer);
-}
+async function consumeSSE(response,onEvent){return window.NeuroAgentStream.consume(response,onEvent);}
 function demoReply(question) {
   if(i18n.getLocale()==='en'){
     if(/quality|check/i.test(question))return `The current modality is **${state.mode}**. No real signal-quality analysis has been run yet.\n\nPlease verify:\n\n1. The main file and companion files are complete.\n2. Sampling rate and channel names match the acquisition record.\n3. Events and recording duration are correct.\n4. Run signal profiling before deciding on bad channels or artifacts.\n\nThis is a local demo response, not a model analysis result.`;
@@ -392,48 +525,89 @@ function demoReply(question) {
   if(/流程|步骤/.test(question))return `当前 ${state.mode} 模板启用了：\n\n${state.steps.filter(s=>s.enabled).map((s,i)=>`${i+1}. ${s.name}：${s.params.map(p=>p.join(' = ')).join('，')}`).join('\n')}\n\n这些是可编辑的示例配置，尚未按你的采集设备、实验设计或原始数据验证。演示运行只模拟步骤进度。`;
   return `已收到你的问题：“${question}”\n\n目前使用本地演示回复，尚未连接大模型。你可以让我“解释当前流程”或查看“质量检查建议”，也可以在连接设置中接入现有 Go 后端。\n\n真实的 ${state.mode} 文件解析与预处理需要后续接入分析服务。`;
 }
-async function sendMessage(text) {
+async function sendMessage(text,options={}) {
   if(state.sending||!text.trim())return;
-  const chatDataset=state.current,previousAnalysisId=chatDataset?.analysis?.analysis_id||null;
-  text=text.trim();const expectedOperation=isAgentOperationRequest(text);state.sending=true;$('#chat-input').value='';appendMessage('user',text);
+  if(window.NeuroPPG?.isBusy?.())return toast(t('toast.wait'));
+  const page=state.view||'eeg',chatDataset=['help','sessions','ppg'].includes(page)?null:state.current,previousAnalysisId=chatDataset?.analysis?.analysis_id||null;
+  const pageContext=window.NeuroPages.context(page,chatDataset);
+  let componentContext=window.NeuroComponents?.snapshot(page,chatDataset?.datasetId);
+  if(componentContext)componentContext.explain_only=options.explainComponent===true;
+  if(page==='history')pageContext.recent_runs=state.history.slice(-4).map(run=>({modality:run.mode,time:run.time,executed:run.real===true,steps:run.steps?.map(step=>step.key||step.name)}));
+  if(page==='datasets')pageContext.datasets=state.datasets.map(file=>({dataset_id:file.datasetId,modality:file.mode,parsed:Boolean(file.inspection),selected:file===chatDataset}));
+  let ppgID='';
+  text=text.trim();const overwriteSleepLabels=requestsLabelOverwrite(text),sleepViewActive=$('.nav-item[data-view="sleep"]')?.classList.contains('active'),sleepOperation=isSleepStagingRequest(text)||(sleepViewActive&&overwriteSleepLabels),expectedOperation=isAgentOperationRequest(text);state.sending=true;$('#chat-input').value='';appendMessage('user',text);
   $('#send-message').textContent='■';$('#send-message').title=t('action.stop');$('#send-message').setAttribute('aria-label',t('action.stop'));
-  const pending=appendThinkingMessage();let answer='',requestTimeout,stopOperationProgress=()=>{};state.streamController=new AbortController();
-  if(expectedOperation)stopOperationProgress=showAgentOperationProgress(pending,Boolean(chatDataset?.datasetId));
+  const pending=appendThinkingMessage(),execution=window.NeuroAgentStream.attach(pending);let answer='',requestTimeout,renderFrame=0;state.streamController=new AbortController();
+  if(page==='ppg')window.NeuroPPG.setAgentBusy(true);
+  const resetIdleTimeout=()=>{clearTimeout(requestTimeout);requestTimeout=setTimeout(()=>state.streamController?.abort('timeout'),120000);};
   try {
     if(state.backend==='demo') {
       await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,450);state.streamController.signal.addEventListener('abort',()=>{clearTimeout(timer);reject(new DOMException('已停止','AbortError'));},{once:true});});
-      answer=demoReply(text);updateAssistantMessage(pending,answer);
+      answer=demoReply(text);updateAssistantMessage(pending,answer);execution.finish('completed');
     }
     else {
+      execution.phase('prepare');
       await ensureDatasetRegistration(chatDataset);
-      const meta=state.current?.inspection;
+      pageContext.dataset_id=chatDataset?.datasetId||null;
+      if(componentContext&&componentContext.dataset_id!==(chatDataset?.datasetId||'')){componentContext=window.NeuroComponents?.snapshot(page,chatDataset?.datasetId);componentContext.explain_only=options.explainComponent===true;}
+	  if(page==='ppg'){
+        try{ppgID=await window.NeuroPPG.prepareAgent(state.streamController.signal);}
+        catch(error){
+          if(error.name==='AbortError')throw error;
+          // Invalid PPG structure should still allow a conversation explaining
+          // which field to correct; it must never inherit the previous EEG file.
+          pageContext.ppg.validation_error=error.message;
+        }
+      }
+	  let workflowEvidence='';
+	  if(sleepOperation && page==='sleep'){
+		if(!state.current?.datasetId)throw Error(i18n.getLocale()==='en'?'Import and confirm a sleep EEG recording first.':'请先导入并确认睡眠 EEG 数据。');
+		execution.event({kind:'tool',id:'local-sleep',tool:'suggest_sleep_stages',state:'running'});
+		const staged=await executeSleepStagingWorkflow(state.current.datasetId,overwriteSleepLabels,state.streamController.signal);
+		execution.event({kind:'tool',id:'local-sleep',tool:'suggest_sleep_stages',state:'completed'});
+		workflowEvidence=i18n.getLocale()==='en'
+		  ? `\n[The outer workflow has already executed the local sleep-staging tool successfully. Do not call it again and do not describe a future plan. Report this real result naturally: analysis_id=${staged.analysis_id}; epoch_seconds=${staged.epoch_seconds}; counts=${JSON.stringify(staged.counts)}; channels=${JSON.stringify(staged.channel_support)}; capabilities=${JSON.stringify(staged.capabilities)}; detected_events=${JSON.stringify(staged.event_counts)}; existing_labels_overwritten=${overwriteSleepLabels}; review_required=true.]`
+		  : `\n[外层工作流已经成功执行本地睡眠分期工具。不要再次调用，也不要再描述将来要做的计划；请自然说明这次真实结果：analysis_id=${staged.analysis_id}；epoch_seconds=${staged.epoch_seconds}；标签计数=${JSON.stringify(staged.counts)}；通道支持=${JSON.stringify(staged.channel_support)}；检测能力=${JSON.stringify(staged.capabilities)}；事件计数=${JSON.stringify(staged.event_counts)}；已覆盖现有标签=${overwriteSleepLabels}；review_required=true。]`;
+	  }
+      const meta=chatDataset?.inspection;
       // 明确标注证据边界：元数据可以回答通道数和采样率，但不能证明数据质量良好。
-      const evidence=meta?`已由 ${meta.reader} 读取：格式=${meta.format}，模态=${meta.modality}，通道数=${meta.channel_count}，采样率=${meta.sampling_rate_hz} Hz，时长=${meta.duration_seconds.toFixed(3)} 秒，样本数=${meta.sample_count}，通道类型=${JSON.stringify(meta.channel_type_counts)}，标注数=${meta.annotation_count}，已标记坏道=${JSON.stringify(meta.bad_channels)}。dataset_id=${state.current.datasetId}。这些是文件元数据，尚未执行信号质量分析或预处理。`:`当前只有用户选择的模态 ${state.mode}，没有已解析的数据文件。`;
-      requestTimeout=setTimeout(()=>state.streamController?.abort('timeout'),120000);
-      const response=await fetch(`${state.url}/chatStream`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({question:`[界面语言：${i18n.getLocale()==='en'?'English':'简体中文'}；请使用相同语言回答。]\n[数据上下文：${evidence}]\n${text}`,id:state.session,dataset_id:state.current?.datasetId||'',response_mode:state.responseMode}),signal:state.streamController.signal});
+      const evidence=meta?`已由 ${meta.reader} 读取：格式=${meta.format}，模态=${meta.modality}，通道数=${meta.channel_count}，采样率=${meta.sampling_rate_hz} Hz，时长=${meta.duration_seconds.toFixed(3)} 秒，样本数=${meta.sample_count}，通道类型=${JSON.stringify(meta.channel_type_counts)}，标注数=${meta.annotation_count}，已标记坏道=${JSON.stringify(meta.bad_channels)}。dataset_id=${chatDataset.datasetId}。这些是文件元数据，尚未执行信号质量分析或预处理。`:`Active page=${page}; no MNE dataset bound to this turn. For PPG use run_ppg_analysis with the prepared page configuration.`;
+      resetIdleTimeout();
+      const response=await fetch(`${state.url}/chatStream`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({user_query:text,question:`[Active page context: ${JSON.stringify(pageContext)}]\n[界面语言：${i18n.getLocale()==='en'?'English':'简体中文'}；请使用相同语言回答。]\n[数据上下文：${evidence}]${workflowEvidence}\n${text}`,id:state.session,dataset_id:chatDataset?.datasetId||'',workspace:page,ppg_id:ppgID,ui_context:componentContext,response_mode:state.responseMode}),signal:state.streamController.signal});
       if(!response.ok)throw new Error(t('error.backendHttp',{status:response.status}));
-      let renderFrame=0,streamError='';
+      let streamError='',streamErrorCode='',receivedDone=false;
       await consumeSSE(response,(event,data)=>{
-        if(event==='message'){
-          answer+=data;
+        resetIdleTimeout();
+        if(event==='status'){execution.event(JSON.parse(data));return;}
+        if(event==='done'){receivedDone=true;return;}
+        if(event==='message'||event==='replace'){
+          answer=event==='replace'?data:answer+data;
+          if(event==='message')execution.phase('streaming');
           // 将高频 token 合并到一帧渲染，减少 Markdown 重排造成的闪烁。
           if(!renderFrame)renderFrame=requestAnimationFrame(()=>{renderFrame=0;updateAssistantMessage(pending,answer);});
         } else if(event==='error') {
-          try{streamError=JSON.parse(data).message||t('error.stream');}catch{streamError=data||t('error.stream');}
+          try{const failure=JSON.parse(data);streamErrorCode=failure.code;streamError=failure.code==='AGENT_STEP_LIMIT'?(i18n.getLocale()==='en'?'Agent interaction budget reached. Completed actions are not undone. Review tool records before continuing; consider Deep analysis for complex tasks.':failure.message):failure.message||t('error.stream');}catch{streamError=data||t('error.stream');}
         }
       });
       clearTimeout(requestTimeout);
       if(renderFrame)cancelAnimationFrame(renderFrame);
-      if(streamError)throw new Error(streamError);
+      if(streamError){const error=new Error(streamError);error.code=streamErrorCode;throw error;}
+      if(!receivedDone)throw new Error(i18n.getLocale()==='en'?'Response interrupted before completion.':'连接在回答完成前中断。');
       if(!answer.trim())throw new Error(t('error.empty'));
-      updateAssistantMessage(pending,answer);
+      updateAssistantMessage(pending,answer);execution.finish('completed');
     }
   }catch(error){
-    if(error.name==='AbortError')updateAssistantMessage(pending,answer||`*${t('agent.stopped')}*`);
-    else updateAssistantMessage(pending,t('error.connection',{message:error.message}));
+    if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0;}
+    const cancelled=state.streamController?.signal.aborted&&state.streamController.signal.reason!=='timeout';
+    execution.finish(cancelled?'cancelled':'failed');
+    if(cancelled)updateAssistantMessage(pending,(answer?answer+'\n\n':'')+`*${t('agent.stopped')}*`);
+    else if(error.code==='AGENT_STEP_LIMIT')updateAssistantMessage(pending,(answer?answer+'\n\n':'')+error.message);
+    else updateAssistantMessage(pending,(answer?answer+'\n\n':'')+t('error.connection',{message:state.streamController?.signal.reason==='timeout'?(i18n.getLocale()==='en'?'No stream activity for 120 seconds':'120 秒未收到流式响应'):error.message}));
   }
   finally{
-    clearTimeout(requestTimeout);stopOperationProgress();state.sending=false;state.streamController=null;$('#send-message').textContent='↑';$('#send-message').title=t('action.send');$('#send-message').setAttribute('aria-label',t('action.send'));
+    clearTimeout(requestTimeout);if(renderFrame)cancelAnimationFrame(renderFrame);
+    if(page==='ppg'){try{await window.NeuroPPG.syncAgentResult(ppgID);}catch(error){toast(error.message);}window.NeuroPPG.setAgentBusy(false);}
+    state.sending=false;state.streamController=null;$('#send-message').textContent='↑';$('#send-message').title=t('action.send');$('#send-message').setAttribute('aria-label',t('action.send'));
     // Agent 工具在服务端执行，SSE 正文不会携带大体积波形；回答结束后用
     // dataset_id 查询一次最新结果，只有 analysis_id 变化才刷新画布。
     let operationResult=null;
@@ -480,6 +654,45 @@ function exportSelectedChannel(){
   const url=URL.createObjectURL(new Blob([`\uFEFF${rows.join('\n')}`],{type:'text/csv;charset=utf-8'})),anchor=element('a');anchor.href=url;anchor.download=`${state.current?.name||state.mode}-${state.selectedChannel}-${state.processed?'processed':'raw'}.csv`;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function configSnapshot(){return {schemaVersion:1,mode:state.mode,demo:!state.current?.datasetId,processed:Boolean(state.analysis),datasetId:state.current?.datasetId||null,steps:clone(state.steps),exportedAt:new Date().toISOString()};}
+
+// 组件只读适配器：显式取字段，不返回整个 state/current/analysis。
+// 文件路径、API Key、波形数组和完整报告不能通过组件解释进入模型上下文。
+function agentComponentState(id,detail={}){
+  const file=state.current,meta=file?.inspection,report=meta?.structure_report||{},analysis=state.analysis;
+  const stepSummary=step=>({key:step.key,name:step.english||step.name,enabled:step.enabled,parameters:step.params.map(([name,value])=>({name,value}))});
+  const metadata=()=>({loaded:Boolean(meta),dataset_id:file?.datasetId||null,modality:meta?.modality,sampling_rate_hz:meta?.sampling_rate_hz,channel_count:meta?.channel_count,duration_seconds:meta?.duration_seconds,format:meta?.format});
+  switch(id){
+    case 'dataset':return {...metadata(),stage:state.importStatus?.stage,status:state.importStatus?.status,error:state.importStatus?.error,requires_confirmation:report.requires_confirmation};
+    case 'labels':return {dataset_id:file?.datasetId,external_count:report.import_config?.external_annotations?.length||0,native_and_external_count:meta?.annotation_count,validation:file?.labelReport,edit_enabled:!$('#manage-labels')?.hidden};
+    case 'structure':{
+      const draft=$('#structure-dialog')?.open?{sampling_rate_hz:$('#confirm-rate')?.value,unit:$('#confirm-unit')?.value,layout:$('#confirm-layout')?.value,montage:$('#confirm-montage')?.value}:null;
+      const row=Number.isInteger(detail.review_channel_index)?$$('.review-channel')[detail.review_channel_index]:null;
+      return {...metadata(),unit:report.unit,confidence:meta?.structure_confidence,conflicts:meta?.structure_conflicts,requires_confirmation:report.requires_confirmation,draft,selected_channel_draft:row?{name:row.querySelector('.review-name').value,type:row.querySelector('.review-type').value,reference:row.querySelector('.review-ref').checked,excluded:row.querySelector('.review-drop').checked}:null,warning:'Draft values have not necessarily been validated or saved'};
+    }
+    case 'pipeline':{
+      const step=state.steps.find(item=>item.key===detail.step_key),parameter=step?.params[detail.parameter_index];
+      return {modality:state.mode,running:state.running,steps:state.steps.map(stepSummary),selected_step:step?stepSummary(step):null,selected_parameter:parameter?{name:parameter[0],value:parameter[1]}:null,selected_step_missing:Boolean(detail.step_key&&!step)};
+    }
+    case 'signal':{
+      const preview=activeSignalPreview();
+      return {...metadata(),source:state.processed?'processed':'raw',real_preview:Boolean(preview?.data?.length),selected_channel:state.singleChannel?state.selectedChannel:null,displayed_channels:preview?.channel_names||[],requested_window:{start_seconds:state.signalWindow.start,duration_seconds:state.signalWindow.duration},displayed_window:preview?{start_seconds:preview.start_seconds??0,end_seconds:preview.end_seconds??null,duration_seconds:preview.duration_seconds??(Number.isFinite(preview.end_seconds)?preview.end_seconds-(preview.start_seconds??0):null)}:null,loading:state.signalWindow.loading,analysis_id:analysis?.analysis_id,preview_unit:preview?.unit,
+        display_only_statistics:state.singleChannel?Object.fromEntries(['samples','rate','min','max','mean','rms'].map(key=>[key,$(`#channel-${key}`)?.textContent])):null,limitation:'Display may be downsampled. No raw samples sent. Use a real analysis tool for scientific or artifact conclusions.'};
+    }
+    case 'channels':return {selected_channel:state.selectedChannel,channel_count:meta?.channel_count,montage:meta?.montage,position_count:report.channel_positions?.filter(p=>[p.x,p.y,p.z].every(Number.isFinite)).length||0,coordinate_basis:meta?.montage?'standard_montage_not_measured':report.channel_positions?.length?'file_positions':'acquisition_order_not_spatial',reference_channels:meta?.reference_channels};
+    case 'quality':return {analysis_id:analysis?.analysis_id,comparison:analysis?.result?.quality_comparison,saved:analysis?.output?.saved===true,steps:analysis?.result?.audit_log?.map(item=>({step:item.step,status:item.status}))};
+    case 'products':{const products=analysis?.result?.analysis_products||{};return {analysis_id:analysis?.analysis_id,available:Object.keys(products),decoding:products.decoding?{performed:products.decoding.performed,metric:products.decoding.metric,mean:products.decoding.mean,std:products.decoding.std,folds:products.decoding.folds}:null,erp_conditions:Object.keys(products.erp?.conditions||{}),time_frequency_performed:products.time_frequency?.performed};}
+    case 'tasks':return {status:$('#task-status')?.textContent,steps:typeof advancedLiveSteps!=='undefined'?[...advancedLiveSteps.values()].map(item=>({step:item.step,status:item.status,attempt:item.attempt})):[],pending_fields:typeof advancedCurrentTask!=='undefined'?advancedCurrentTask?.pending_fields?.map(item=>item.name):[]};
+    case 'meg-settings':return {sss_mode:$('#meg-sss-mode')?.value,tsss_duration_seconds:Number($('#meg-st-duration')?.value),empty_room_dataset_id:$('#meg-empty-room')?.value||null};
+    case 'run':return {running:state.running,save_output:$('#save-output')?.checked,enabled_steps:state.steps.filter(step=>step.enabled).map(step=>step.key),dataset_id:file?.datasetId||null};
+    case 'datasets':return {count:state.datasets.length,focused_row:detail.list_index,records:state.datasets.map((item,index)=>({dataset_id:item.datasetId,modality:item.mode,parsed:Boolean(item.inspection),selected:item===file,focused:index===detail.list_index,channel_count:item.inspection?.channel_count,sampling_rate_hz:item.inspection?.sampling_rate_hz}))};
+    case 'bids':return {visible:!$('#bids-browser')?.hidden,listed_items:$('#bids-browser')?.querySelectorAll('button').length||0,limitation:'Browser paths are local only; select a dataset to query verified metadata.'};
+    case 'batch':return {selected_count:$('#batch-datasets')?.querySelectorAll('input:checked').length||0,save_output:$('#batch-save')?.checked,running:state.running};
+    case 'history':{const summarize=run=>run?{modality:run.mode,executed:run.real===true,time:run.time,steps:run.steps?.map(step=>step.key),quality:run.result?.quality_comparison}:null;return {count:state.history.length,focused_run:Number.isInteger(detail.list_index)?summarize([...state.history].reverse()[detail.list_index]):null,recent_runs:state.history.slice(-5).map(summarize)};}
+    case 'sessions':return {count:state.sessions.length,current_session_id:state.session};
+    case 'algorithm-library':return {modality:state.mode,available:algorithmCatalog[state.mode]?.map(item=>({key:item.key,name:item.english,executable:item.executable,added:state.steps.some(step=>step.key===item.key)}))};
+    default:return {};
+  }
+}
 async function syncLatestAgentAnalysis(dataset,previousAnalysisId){
   try{
     const response=await fetch(`${state.url}/datasets/${encodeURIComponent(dataset.datasetId)}/analysis/latest`,{signal:AbortSignal.timeout(10000)});
@@ -545,6 +758,8 @@ function drawSignal(){
   const duration=series?.[0]?.length&&preview.sample_rate_hz?series[0].length/preview.sample_rate_hz:10,startTime=Number(preview?.start_seconds)||0;
   for(let tick=0;tick<=10;tick++){const x=left+plotWidth*tick/10;ctx.strokeStyle='#edf1ee';ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.fillStyle='#a7b0aa';ctx.fillText((startTime+duration*tick/10).toFixed(duration<.1?4:duration<1?3:duration<10?1:0),x-2,height-5);}
   labels.slice(0,channelCount).forEach((label,index)=>{const y=top+rowHeight*(index+.5);ctx.fillStyle='#9aa79f';ctx.fillText(label,1,y+3);ctx.strokeStyle='#f2f5f3';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();const selected=Boolean(preview)&&label===state.selectedChannel;ctx.strokeStyle=selected?'#0b6657':state.processed?'#52a18d':'#8bb0a5';ctx.lineWidth=selected?1.8:.72;ctx.globalAlpha=preview&&!selected?.48:1;ctx.beginPath();if(series?.[index]?.length){const values=series[index];const center=values.reduce((sum,value)=>sum+value,0)/values.length;const peak=Math.max(...values.map(value=>Math.abs(value-center)),Number.EPSILON);values.forEach((value,sample)=>{const x=left+plotWidth*sample/Math.max(1,values.length-1),point=y-(value-center)/peak*rowHeight*.36;if(sample===0)ctx.moveTo(x,point);else ctx.lineTo(x,point);});}else{for(let pixel=0;pixel<=plotWidth;pixel++){const time=pixel/plotWidth*10;let amplitude=state.mode==='fNIRS'?Math.sin(time*1.7+index)*4+Math.sin(time*4+index)*1.7:Math.sin(time*15+index*2)*2.5+Math.sin(time*36+index)*1.6+Math.sin(time*68+index*4)*1.2;amplitude+=Math.sin(time*123+index)*.7;if(!state.processed&&state.mode!=='fNIRS')amplitude+=Math.exp(-((time-(3+index*.28))**2)/.015)*7;const point=y-amplitude*(state.processed?.65:1);if(pixel===0)ctx.moveTo(left+pixel,point);else ctx.lineTo(left+pixel,point);}}ctx.stroke();});
+  ctx.globalAlpha=1;const annotations=state.current?.inspection?.structure_report?.import_config?.external_annotations||[],visibleAnnotations=annotations.filter(item=>Number(item.onset)>=startTime&&Number(item.onset)<=startTime+duration),annotationStride=Math.max(1,Math.ceil(visibleAnnotations.length/500));
+  visibleAnnotations.forEach((item,index)=>{if(index%annotationStride)return;const x=left+plotWidth*(Number(item.onset)-startTime)/Math.max(duration,Number.EPSILON);ctx.save();ctx.setLineDash([3,3]);ctx.strokeStyle='#d08a32';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.restore();if(index<40){ctx.fillStyle='#9a641f';ctx.font='8px Segoe UI';const text=String(item.description||'').slice(0,24);ctx.fillText(text,Math.min(width-right-ctx.measureText(text).width,Math.max(left,x+3)),top+9+(index%2)*10);}});
   $('#signal-caption').textContent=preview?t('signal.realCaption',{count:channelCount,duration:duration.toFixed(duration<1?3:1)}):t('signal.caption');$('#signal-unit').textContent=t('signal.amplitude',{unit:preview?.unit||templates[state.mode].unit});$('.signal-card .pill').textContent=preview?t('badge.real'):t('badge.synthetic');$('.chart-footer span:first-child').textContent=preview?t('signal.realDisclaimer'):t('signal.disclaimer');
   canvas.setAttribute('aria-label',preview?t(state.processed?'signal.processedAria':'signal.rawAria'):t('signal.syntheticAria'));
   renderChannelDetail(preview);
@@ -602,6 +817,9 @@ for(const id of ['import-top','change-file','import-list'])$(`#${id}`).addEventL
   else $('#file-input').click();
 });
 $('#file-input').addEventListener('change',event=>{importFiles(event.target.files);event.target.value='';});
+$('#import-labels').addEventListener('click',importDatasetLabels);
+$('#manage-labels').addEventListener('click',openLabelManager);
+$('#remove-labels').addEventListener('click',removeDatasetLabels);
 document.addEventListener('dragover',event=>event.preventDefault());document.addEventListener('drop',event=>event.preventDefault());
 $('#dropzone').addEventListener('dragover',event=>{event.preventDefault();$('#dropzone').classList.add('dragging');});$('#dropzone').addEventListener('dragleave',()=>$('#dropzone').classList.remove('dragging'));$('#dropzone').addEventListener('drop',event=>{event.preventDefault();$('#dropzone').classList.remove('dragging');importFiles(event.dataTransfer.files);});
 $('#reset-pipeline').addEventListener('click',()=>{if(state.running)return toast(t('toast.resetWait'));const current=state.current;setMode(state.mode);state.current=current;renderDataset();toast(t('toast.resetDone'));});

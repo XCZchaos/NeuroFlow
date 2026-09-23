@@ -41,11 +41,14 @@ type QdrantConfig struct {
 
 // OpenAIConfig OpenAI API 配置
 type OpenAIConfig struct {
-	APIKey      string  `mapstructure:"api_key"`
-	Model       string  `mapstructure:"model"`
-	APIBase     string  `mapstructure:"api_base"`
-	MaxTokens   int     `mapstructure:"max_tokens"`
-	Temperature float32 `mapstructure:"temperature"`
+	APIKey               string  `mapstructure:"api_key"`
+	Provider             string  `mapstructure:"provider"`
+	Model                string  `mapstructure:"model"`
+	APIBase              string  `mapstructure:"api_base"`
+	MaxTokens            int     `mapstructure:"max_tokens"`
+	Temperature          float32 `mapstructure:"temperature"`
+	CapabilitiesDetected bool    `mapstructure:"capabilities_detected"`
+	SupportsTemperature  bool    `mapstructure:"supports_temperature"`
 }
 
 // PrometheusConfig Prometheus 配置
@@ -88,6 +91,8 @@ func InitConfig(configFile string) (*Config, error) {
 	for key, environment := range map[string]string{
 		"openai.api_key": "NEUROFLOW_LLM_API_KEY", "openai.api_base": "NEUROFLOW_LLM_API_BASE",
 		"openai.model": "NEUROFLOW_LLM_MODEL", "openai.max_tokens": "NEUROFLOW_LLM_MAX_TOKENS",
+		"openai.provider": "NEUROFLOW_LLM_PROVIDER", "openai.temperature": "NEUROFLOW_LLM_TEMPERATURE",
+		"openai.capabilities_detected": "NEUROFLOW_LLM_CAPABILITIES_DETECTED", "openai.supports_temperature": "NEUROFLOW_LLM_SUPPORTS_TEMPERATURE",
 	} {
 		if value := strings.TrimSpace(os.Getenv(environment)); value != "" {
 			v.Set(key, value)
@@ -121,13 +126,16 @@ func setDefaults(v *viper.Viper) {
 
 	// OpenAI 默认值
 	v.SetDefault("openai.api_key", "")
+	v.SetDefault("openai.provider", "openai-compatible")
 	v.SetDefault("openai.model", "gpt-5.6-sol")
 	v.SetDefault("openai.api_base", "https://api.chatanywhere.tech/v1")
 	// MaxTokens 是单次回答的生成上限，不是上下文窗口大小。
 	// 深度分析模式需要容纳证据、步骤、风险和验证方案；即时模式由提示词主动收敛篇幅。
 	v.SetDefault("openai.max_tokens", 4096)
-	// gpt-5.6-sol 当前要求 temperature 固定为 1；其他值会在 Eino 模型层直接报错。
+	// temperature 只有在 Electron 能力探测确认支持后才会发送给模型服务。
 	v.SetDefault("openai.temperature", 1.0)
+	v.SetDefault("openai.capabilities_detected", false)
+	v.SetDefault("openai.supports_temperature", false)
 
 	// Prometheus 默认值
 	v.SetDefault("prometheus.url", "http://localhost:9090")

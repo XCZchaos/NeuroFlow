@@ -3,3 +3,6 @@
 .model-settings-fields input{display:block;width:100%;margin-top:7px;padding:9px;border:1px solid #dfe7e0;border-radius:6px;color:#405e50;background:#fff}
 .model-settings-fields .field-label{margin-top:11px}
 .model-settings-fields .settings-note{margin:12px 0 0}
+.model-temperature-label>span{display:inline-block}.model-temperature-label output{float:right;color:var(--green);font-weight:700}.model-settings-fields input[type="range"]{padding:0;border:0;accent-color:var(--green)}.model-field-note{margin:6px 0 0;color:#80938c;font-size:10px;line-height:1.6}
+
+.model-capabilities{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:9px}.model-capability{padding:5px 7px;border-radius:5px;background:#f2f4f3;color:#7c8883}.model-capability.supported{background:#e8f6ef;color:#16745f}.model-capability.unsupported{background:#fff0ec;color:#9a4e3e}#test-model-config{width:100%;margin-top:12px}

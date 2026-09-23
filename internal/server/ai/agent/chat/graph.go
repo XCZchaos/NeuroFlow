@@ -9,14 +9,13 @@ import (
 
 func (u chatServer) BuildChatAgent(ctx context.Context) (r compose.Runnable[*UserMessage, *schema.Message], err error) {
 	const (
-		InputToRag      = "InputToRag"
-		ChatTemplate    = "ChatTemplate"
-		ReactAgent      = "ReactAgent"
-		QdrantRetriever = "QdrantRetriever"
-		InputToChat     = "InputToChat"
+		ModeEvidence = "ModeEvidence"
+		ChatTemplate = "ChatTemplate"
+		ReactAgent   = "ReactAgent"
+		InputToChat  = "InputToChat"
 	)
 	g := compose.NewGraph[*UserMessage, *schema.Message]()
-	_ = g.AddLambdaNode(InputToRag, compose.InvokableLambdaWithOption(newInputToRagLambda), compose.WithNodeName("UserMessageToRag"))
+	_ = g.AddLambdaNode(ModeEvidence, compose.InvokableLambdaWithOption(modeRetrieval(u.retriever)), compose.WithNodeName("ModeEvidence"))
 	chatTemplateKeyOfChatTemplate := newChatTemplateLambda(ctx)
 
 	_ = g.AddChatTemplateNode(ChatTemplate, chatTemplateKeyOfChatTemplate)
@@ -26,29 +25,13 @@ func (u chatServer) BuildChatAgent(ctx context.Context) (r compose.Runnable[*Use
 	}
 	_ = g.AddLambdaNode(ReactAgent, reactAgentKeyOfLambda, compose.WithNodeName("ReActAgent"))
 
-	// 注意下面的 output key 设置，把查询出来的设置为了documents，匹配 ChatTemplate 里面说prompt
-	/*
-
-	                 InputToRag
-START ─────────→     ↓
-                 QdrantRetriever
-                        ↓
-                      ┌─────┐
-                      │     ↓
-START → InputToChat ──┴→ ChatTemplate
-                           ↓
-                       ReactAgent
-                           ↓
-                          END
-
-	*/
-	_ = g.AddRetrieverNode(QdrantRetriever, u.retriever, compose.WithOutputKey("documents"))
+	// 外层工作流按模式执行 0/1/2 轮检索，再将结果与用户上下文合并给 ReAct。
+	// 简单文件事实仍由 Agent 的 inspect_dataset 校验，不由知识库猜测。
 	_ = g.AddLambdaNode(InputToChat, compose.InvokableLambdaWithOption(newInputToChatLambda), compose.WithNodeName("UserMessageToChat"))
-	_ = g.AddEdge(compose.START, InputToRag)
+	_ = g.AddEdge(compose.START, ModeEvidence)
 	_ = g.AddEdge(compose.START, InputToChat)
 	_ = g.AddEdge(ReactAgent, compose.END)
-	_ = g.AddEdge(InputToRag, QdrantRetriever)
-	_ = g.AddEdge(QdrantRetriever, ChatTemplate)
+	_ = g.AddEdge(ModeEvidence, ChatTemplate)
 	_ = g.AddEdge(InputToChat, ChatTemplate)
 	_ = g.AddEdge(ChatTemplate, ReactAgent)
 	r, err = g.Compile(ctx, compose.WithGraphName("ChatAgent"), compose.WithNodeTriggerMode(compose.AllPredecessor))

@@ -18,6 +18,66 @@ type registerDatasetRequest struct {
 type bidsBrowseRequest struct {
 	Path string `json:"path" binding:"required"`
 }
+type attachLabelsRequest struct {
+	Path            string               `json:"path"`
+	SampleOrigin    int                  `json:"sample_origin"`
+	LabelSourceName string               `json:"label_source_name"`
+	Annotations     []dataset.Annotation `json:"annotations"`
+}
+
+// AttachDatasetLabels 为当前信号导入配套事件/阶段标签，并让旧分析结果失效。
+func AttachDatasetLabels() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		var request attachLabelsRequest
+		if err := ctx.ShouldBindJSON(&request); err != nil || (request.Path == "" && request.Annotations == nil) {
+			ctx.JSON(http.StatusBadRequest, gin.H{"code": "INVALID_LABEL_REQUEST", "message": "path or annotations is required"})
+			return
+		}
+		readCtx, cancel := context.WithTimeout(ctx.Request.Context(), 90*time.Second)
+		defer cancel()
+		var record dataset.Record
+		var labels dataset.LabelAttachment
+		var err error
+		if request.Path != "" {
+			record, labels, err = dataset.AttachLabels(readCtx, ctx.Param("id"), request.Path, request.SampleOrigin)
+		} else {
+			record, labels, err = dataset.ReplaceLabels(readCtx, ctx.Param("id"), request.LabelSourceName, request.SampleOrigin, request.Annotations)
+		}
+		if err != nil {
+			ctx.JSON(http.StatusUnprocessableEntity, gin.H{"code": "LABEL_IMPORT_FAILED", "message": err.Error()})
+			return
+		}
+		aitools.InvalidateDatasetAnalysis(ctx.Param("id"))
+		ctx.JSON(http.StatusOK, gin.H{"dataset_id": record.ID, "inspection": record.Inspection, "label_source_name": labels.SourceName, "label_count": labels.Count, "sample_origin": labels.SampleOrigin, "annotations": labels.Annotations, "validation_report": labels.ValidationReport})
+	}
+}
+
+func GetDatasetLabels() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		readCtx, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
+		defer cancel()
+		labels, err := dataset.ListLabels(readCtx, ctx.Param("id"))
+		if err != nil {
+			ctx.JSON(http.StatusNotFound, gin.H{"code": "LABELS_NOT_FOUND", "message": err.Error()})
+			return
+		}
+		ctx.JSON(http.StatusOK, labels)
+	}
+}
+
+func DeleteDatasetLabels() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		readCtx, cancel := context.WithTimeout(ctx.Request.Context(), 90*time.Second)
+		defer cancel()
+		record, err := dataset.DeleteLabels(readCtx, ctx.Param("id"))
+		if err != nil {
+			ctx.JSON(http.StatusUnprocessableEntity, gin.H{"code": "LABEL_DELETE_FAILED", "message": err.Error()})
+			return
+		}
+		aitools.InvalidateDatasetAnalysis(ctx.Param("id"))
+		ctx.JSON(http.StatusOK, gin.H{"dataset_id": record.ID, "inspection": record.Inspection, "label_count": 0})
+	}
+}
 
 func BrowseBIDS() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
@@ -98,7 +158,7 @@ func RegisterDataset() gin.HandlerFunc {
 			return
 		}
 		// 防止损坏文件或第三方读取器长期占用请求。
-		inspectCtx, cancel := context.WithTimeout(ctx.Request.Context(), 30*time.Second)
+		inspectCtx, cancel := context.WithTimeout(ctx.Request.Context(), 90*time.Second)
 		defer cancel()
 		record, err := dataset.Register(inspectCtx, request.Path)
 		if err != nil {

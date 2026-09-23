@@ -61,6 +61,27 @@ def apply_config(raw, path):
     dictionary = config.get('event_dictionary')
     if isinstance(dictionary, dict):
         raw.annotations.rename(dictionary)
+    # External label files are parsed and validated once by attach_labels.py.
+    # Store normalized events in the import configuration so every reader
+    # (preview, preprocessing, Agent inspection and report generation) sees the
+    # exact same annotations without modifying the source recording.
+    external = config.get('external_annotations') or []
+    if external:
+        # A BIDS/BrainVision/EDF reader may already expose the same events.
+        # De-duplicate on normalized time, duration, and text before combining,
+        # otherwise importing a companion events.tsv could double every epoch.
+        existing = {(round(float(onset), 9), round(float(duration), 9), str(description))
+                    for onset, duration, description in zip(raw.annotations.onset,
+                                                             raw.annotations.duration,
+                                                             raw.annotations.description)}
+        imported_rows = [item for item in external
+                         if (round(float(item['onset']), 9), round(float(item.get('duration', 0.0)), 9),
+                             str(item['description'])) not in existing]
+        if imported_rows:
+            imported = mne.Annotations([float(item['onset']) for item in imported_rows],
+                                       [float(item.get('duration', 0.0)) for item in imported_rows],
+                                       [str(item['description']) for item in imported_rows])
+            raw.set_annotations(raw.annotations + imported)
     return raw
 
 

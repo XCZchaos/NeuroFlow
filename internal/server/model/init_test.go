@@ -1,20 +1,22 @@
 package model
 
-import "testing"
+import (
+	"OnCallAgent/pkg/config"
+	"testing"
+)
 
-func TestModelAllowsTemperature(t *testing.T) {
+func TestTemperatureUsesDetectedCapabilityInsteadOfModelName(t *testing.T) {
 	tests := []struct {
-		model string
-		want  bool
+		config config.OpenAIConfig
+		want   bool
 	}{
-		{model: "gpt-5.6-sol", want: false},
-		{model: "GPT-5", want: false},
-		{model: "o3-mini", want: false},
-		{model: "gpt-4o-mini", want: true},
+		{config: config.OpenAIConfig{Model: "custom-thinking", CapabilitiesDetected: true, SupportsTemperature: true}, want: true},
+		{config: config.OpenAIConfig{Model: "gpt-4o-mini", CapabilitiesDetected: true, SupportsTemperature: false}, want: false},
+		{config: config.OpenAIConfig{Model: "deepseek-chat"}, want: false},
 	}
 	for _, test := range tests {
-		if got := modelAllowsTemperature(test.model); got != test.want {
-			t.Fatalf("modelAllowsTemperature(%q) = %v, want %v", test.model, got, test.want)
+		if got := shouldSendTemperature(test.config); got != test.want {
+			t.Fatalf("shouldSendTemperature(%+v) = %v, want %v", test.config, got, test.want)
 		}
 	}
 }

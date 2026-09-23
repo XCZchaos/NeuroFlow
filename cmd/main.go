@@ -9,6 +9,7 @@ import (
 	knowledgeindex "OnCallAgent/internal/server/ai/agent/knowledge_index"
 	"OnCallAgent/internal/server/ai/embeder"
 	"OnCallAgent/internal/server/chatServer"
+	"OnCallAgent/internal/server/dataset"
 	"OnCallAgent/internal/server/model"
 	"OnCallAgent/pkg/config"
 	"OnCallAgent/pkg/log"
@@ -79,6 +80,11 @@ func main() {
 		panic(err)
 	}
 	defer memoryStore.Close()
+	// 数据集 ID 与会话共用本地 SQLite；恢复时校验源文件指纹，防止读取被替换的数据。
+	if err = dataset.InitRegistry("./data/neuroflow.db"); err != nil {
+		panic(err)
+	}
+	defer dataset.CloseRegistry()
 	// 初始化gin
 	r := gin.Default()
 	router.InitRouter(ctx, r, log, config, runnerRAG, runner, chatModel, run, memoryStore)

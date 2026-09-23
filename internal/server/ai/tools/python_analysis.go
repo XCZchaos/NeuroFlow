@@ -253,6 +253,7 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 			}
 			if json.Unmarshal([]byte(strings.TrimPrefix(line, prefix)), &event) == nil {
 				analysisprogress.Publish(input.DatasetID, event.Step, event.Status, event.Detail, event.Attempt)
+				toolinput.StreamAnalysisStep(ctx, event.Step, event.Status, event.Attempt)
 				continue
 			}
 		}

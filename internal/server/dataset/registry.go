@@ -3,6 +3,7 @@ package dataset
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,8 +12,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	_ "modernc.org/sqlite"
 )
 
 // Inspection 对应 Python 检查器返回的 JSON。
@@ -56,9 +59,274 @@ type Record struct {
 	path       string
 }
 
-// 当前先使用进程内注册表。sync.Map 允许多个 HTTP 请求安全地并发读写。
-// 后端重启后记录会消失，未来可替换为数据库而不影响上层接口。
+// LabelAttachment 是外部标签绑定后的摘要。标签内容只会以标准化后的
+// MNE Annotation 形式写入导入配置，原始信号文件和标签文件都不会被修改。
+type LabelAttachment struct {
+	SourceName       string         `json:"label_source_name"`
+	Count            int            `json:"label_count"`
+	SampleOrigin     int            `json:"sample_origin"`
+	Annotations      []Annotation   `json:"annotations,omitempty"`
+	ValidationReport map[string]any `json:"validation_report,omitempty"`
+}
+
+type Annotation struct {
+	Onset       float64 `json:"onset"`
+	Duration    float64 `json:"duration"`
+	Description string  `json:"description"`
+}
+
+// AttachLabels 校验 CSV/TSV/JSON 标签，并把它绑定到已注册的数据集。
+// Python 负责理解列名、样本序号换算和越界检查；全部验证成功后才更新元数据。
+func AttachLabels(ctx context.Context, id, labelPath string, sampleOrigin int) (Record, LabelAttachment, error) {
+	record, ok := Get(id)
+	if !ok {
+		return Record{}, LabelAttachment{}, fmt.Errorf("dataset not found")
+	}
+	abs, err := filepath.Abs(strings.TrimSpace(labelPath))
+	if err != nil {
+		return Record{}, LabelAttachment{}, fmt.Errorf("resolve label path: %w", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil || info.IsDir() {
+		return Record{}, LabelAttachment{}, fmt.Errorf("label file does not exist")
+	}
+	script, err := datasetScriptPath("attach_labels.py")
+	if err != nil {
+		return Record{}, LabelAttachment{}, err
+	}
+	if sampleOrigin != 0 && sampleOrigin != 1 {
+		return Record{}, LabelAttachment{}, fmt.Errorf("sample_origin must be 0 or 1")
+	}
+	cmd := exec.CommandContext(ctx, "python", script, record.path, abs, fmt.Sprintf("%d", sampleOrigin))
+	// Windows 的系统代码页可能不是 UTF-8；Python 必须稳定输出可被 JSON 解码的字节。
+	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	runErr := cmd.Run()
+	var result struct {
+		OK               bool           `json:"ok"`
+		Message          string         `json:"message"`
+		LabelSourceName  string         `json:"label_source_name"`
+		LabelCount       int            `json:"label_count"`
+		SampleOrigin     int            `json:"sample_origin"`
+		Annotations      []Annotation   `json:"annotations"`
+		ValidationReport map[string]any `json:"validation_report"`
+		Record           struct {
+			Inspection Inspection `json:"inspection"`
+		} `json:"record"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &result); err != nil {
+		return Record{}, LabelAttachment{}, fmt.Errorf("label parser returned invalid JSON: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	if runErr != nil || !result.OK {
+		if result.Message == "" {
+			result.Message = strings.TrimSpace(stderr.String())
+		}
+		return Record{}, LabelAttachment{}, fmt.Errorf("attach labels failed: %s", result.Message)
+	}
+	record.Inspection = result.Record.Inspection
+	records.Store(id, record)
+	if err := persistRecord(record); err != nil {
+		return Record{}, LabelAttachment{}, err
+	}
+	return record, LabelAttachment{SourceName: result.LabelSourceName, Count: result.LabelCount, SampleOrigin: result.SampleOrigin, Annotations: result.Annotations, ValidationReport: result.ValidationReport}, nil
+}
+
+func runLabelOperation(ctx context.Context, record Record, operation string, input any) (Record, LabelAttachment, error) {
+	script, err := datasetScriptPath("attach_labels.py")
+	if err != nil {
+		return Record{}, LabelAttachment{}, err
+	}
+	cmd := exec.CommandContext(ctx, "python", script, record.path, operation)
+	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
+	if input != nil {
+		encoded, marshalErr := json.Marshal(input)
+		if marshalErr != nil {
+			return Record{}, LabelAttachment{}, marshalErr
+		}
+		cmd.Stdin = bytes.NewReader(encoded)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	runErr := cmd.Run()
+	var result struct {
+		OK               bool           `json:"ok"`
+		Message          string         `json:"message"`
+		LabelSourceName  string         `json:"label_source_name"`
+		LabelCount       int            `json:"label_count"`
+		SampleOrigin     int            `json:"sample_origin"`
+		Annotations      []Annotation   `json:"annotations"`
+		ValidationReport map[string]any `json:"validation_report"`
+		Record           struct {
+			Inspection Inspection `json:"inspection"`
+		} `json:"record"`
+	}
+	if err = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &result); err != nil {
+		return Record{}, LabelAttachment{}, fmt.Errorf("label service returned invalid JSON: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	if runErr != nil || !result.OK {
+		return Record{}, LabelAttachment{}, fmt.Errorf("label operation failed: %s", result.Message)
+	}
+	if operation != "--list" {
+		record.Inspection = result.Record.Inspection
+		records.Store(record.ID, record)
+		if err = persistRecord(record); err != nil {
+			return Record{}, LabelAttachment{}, err
+		}
+	}
+	return record, LabelAttachment{SourceName: result.LabelSourceName, Count: result.LabelCount, SampleOrigin: result.SampleOrigin, Annotations: result.Annotations, ValidationReport: result.ValidationReport}, nil
+}
+
+func ListLabels(ctx context.Context, id string) (LabelAttachment, error) {
+	record, ok := Get(id)
+	if !ok {
+		return LabelAttachment{}, fmt.Errorf("dataset not found")
+	}
+	_, labels, err := runLabelOperation(ctx, record, "--list", nil)
+	labels.Count = len(labels.Annotations)
+	return labels, err
+}
+
+func ReplaceLabels(ctx context.Context, id, source string, sampleOrigin int, annotations []Annotation) (Record, LabelAttachment, error) {
+	record, ok := Get(id)
+	if !ok {
+		return Record{}, LabelAttachment{}, fmt.Errorf("dataset not found")
+	}
+	return runLabelOperation(ctx, record, "--replace", map[string]any{"label_source_name": source, "sample_origin": sampleOrigin, "annotations": annotations})
+}
+
+func DeleteLabels(ctx context.Context, id string) (Record, error) {
+	record, ok := Get(id)
+	if !ok {
+		return Record{}, fmt.Errorf("dataset not found")
+	}
+	record, _, err := runLabelOperation(ctx, record, "--delete", nil)
+	return record, err
+}
+
 var records sync.Map
+var registryDatabase struct {
+	sync.RWMutex
+	db *sql.DB
+}
+
+// InitRegistry 恢复持久化的数据集句柄，并核对源路径的大小和修改时间。
+// 失效记录仍留在 SQLite 供历史审计，但不会重新暴露给分析工具。
+func InitRegistry(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create dataset registry directory: %w", err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return fmt.Errorf("open dataset registry: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	// A reinitialization (used by tests and future profile switching) must not
+	// leave handles from the previous database in memory.
+	records.Range(func(key, _ any) bool { records.Delete(key); return true })
+	for _, statement := range []string{
+		`PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout=5000`,
+		`CREATE TABLE IF NOT EXISTS dataset_registry (
+			id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, size_bytes INTEGER NOT NULL,
+			modified_ns INTEGER NOT NULL, inspection_json TEXT NOT NULL,
+			valid INTEGER NOT NULL DEFAULT 1, invalid_reason TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+		)`,
+	} {
+		if _, err = db.Exec(statement); err != nil {
+			db.Close()
+			return fmt.Errorf("initialize dataset registry: %w", err)
+		}
+	}
+	rows, err := db.Query(`SELECT id,path,size_bytes,modified_ns,inspection_json FROM dataset_registry WHERE valid=1`)
+	if err != nil {
+		db.Close()
+		return err
+	}
+	type restored struct {
+		id, path       string
+		size, modified int64
+		inspection     string
+	}
+	var candidates []restored
+	for rows.Next() {
+		var item restored
+		if err = rows.Scan(&item.id, &item.path, &item.size, &item.modified, &item.inspection); err != nil {
+			rows.Close()
+			db.Close()
+			return err
+		}
+		candidates = append(candidates, item)
+	}
+	rows.Close()
+	for _, item := range candidates {
+		info, statErr := os.Stat(item.path)
+		if statErr != nil || info.Size() != item.size || info.ModTime().UnixNano() != item.modified {
+			reason := "source path is missing"
+			if statErr == nil {
+				reason = "source fingerprint changed"
+			}
+			_, _ = db.Exec(`UPDATE dataset_registry SET valid=0,invalid_reason=?,updated_at=? WHERE id=?`, reason, time.Now().UTC().Format(time.RFC3339Nano), item.id)
+			continue
+		}
+		var inspection Inspection
+		if json.Unmarshal([]byte(item.inspection), &inspection) == nil {
+			records.Store(item.id, Record{ID: item.id, Inspection: inspection, path: item.path})
+		}
+	}
+	registryDatabase.Lock()
+	old := registryDatabase.db
+	registryDatabase.db = db
+	registryDatabase.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	return nil
+}
+
+func CloseRegistry() error {
+	registryDatabase.Lock()
+	defer registryDatabase.Unlock()
+	if registryDatabase.db == nil {
+		return nil
+	}
+	err := registryDatabase.db.Close()
+	registryDatabase.db = nil
+	return err
+}
+
+func persistRecord(record Record) error {
+	registryDatabase.RLock()
+	db := registryDatabase.db
+	registryDatabase.RUnlock()
+	if db == nil {
+		return nil
+	}
+	info, err := os.Stat(record.path)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(record.Inspection)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`INSERT INTO dataset_registry(id,path,size_bytes,modified_ns,inspection_json,valid,invalid_reason,updated_at)
+		VALUES(?,?,?,?,?,1,'',?) ON CONFLICT(path) DO UPDATE SET id=excluded.id,size_bytes=excluded.size_bytes,
+		modified_ns=excluded.modified_ns,inspection_json=excluded.inspection_json,valid=1,invalid_reason='',updated_at=excluded.updated_at`,
+		record.ID, record.path, info.Size(), info.ModTime().UnixNano(), string(encoded), time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func persistedID(path string) string {
+	registryDatabase.RLock()
+	db := registryDatabase.db
+	registryDatabase.RUnlock()
+	if db == nil {
+		return ""
+	}
+	var id string
+	_ = db.QueryRow(`SELECT id FROM dataset_registry WHERE path=?`, path).Scan(&id)
+	return id
+}
 
 func Register(ctx context.Context, path string) (Record, error) {
 	// Electron 只提交用户通过系统对话框选中的路径；Go 负责规范化路径并调用 Python。
@@ -89,9 +357,46 @@ func Register(ctx context.Context, path string) (Record, error) {
 		return Record{}, &InspectError{Inspection: inspection}
 	}
 	// dataset_id 是 Agent 查询数据的句柄，避免在对话里暴露真实文件路径。
-	record := Record{ID: uuid.NewString(), Inspection: inspection, path: abs}
+	id := persistedID(abs)
+	if id == "" {
+		id = uuid.NewString()
+	}
+	record := Record{ID: id, Inspection: inspection, path: abs}
 	records.Store(record.ID, record)
+	if err := persistRecord(record); err != nil {
+		records.Delete(record.ID)
+		return Record{}, fmt.Errorf("persist dataset registry: %w", err)
+	}
+	if companion := companionLabelPath(abs); companion != "" {
+		if attached, _, attachErr := AttachLabels(ctx, record.ID, companion, 0); attachErr == nil {
+			record = attached
+		} else {
+			record.Inspection.StructureWarnings = append(record.Inspection.StructureWarnings, "matched companion label file but validation failed: "+attachErr.Error())
+			records.Store(record.ID, record)
+			_ = persistRecord(record)
+		}
+	}
 	return record, nil
+}
+
+func companionLabelPath(signalPath string) string {
+	ext := filepath.Ext(signalPath)
+	stem := strings.TrimSuffix(filepath.Base(signalPath), ext)
+	base := stem
+	for _, suffix := range []string{"_eeg", "_meg", "_fnirs", "_ieeg"} {
+		if strings.HasSuffix(strings.ToLower(base), suffix) {
+			base = base[:len(base)-len(suffix)]
+			break
+		}
+	}
+	directory := filepath.Dir(signalPath)
+	for _, name := range []string{base + "_events.tsv", stem + "_events.tsv", stem + "_labels.csv", stem + ".labels.csv", stem + ".labels.json"} {
+		candidate := filepath.Join(directory, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func inspectionScriptPath() (string, error) {
@@ -158,6 +463,9 @@ func ReviewStructure(ctx context.Context, id string, config map[string]any, comm
 	record.Inspection = inspection
 	if commit {
 		records.Store(id, record)
+		if err := persistRecord(record); err != nil {
+			return Record{}, err
+		}
 	}
 	return record, nil
 }

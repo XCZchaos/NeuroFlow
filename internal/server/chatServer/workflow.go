@@ -4,6 +4,7 @@ import (
 	"OnCallAgent/internal/server/ai/toolinput"
 	"OnCallAgent/internal/server/dataset"
 	"OnCallAgent/internal/server/knowledgecatalog"
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -15,6 +16,23 @@ import (
 type turnPlan struct {
 	Text                 string
 	RequiresVerification bool
+}
+
+// The outer workflow uses the page-bound request context, never IDs mentioned
+// in old chat text. PPG has a dedicated engine and must not enter the MNE plan.
+func planWorkspaceTurn(ctx context.Context, question, datasetID string) turnPlan {
+	if ui := toolinput.CurrentUIContext(ctx); ui != nil && ui.ExplainOnly {
+		return turnPlan{Text: "本轮只解释用户选中的组件：先用 inspect_ui_component 读取参数与状态，需要时检索知识或读取已绑定数据集元数据。禁止分析、预处理、写入或修改任务；不能把界面显示说成工具已执行。"}
+	}
+	if scope, ok := toolinput.CurrentWorkspace(ctx); ok {
+		if scope.Page == "ppg" {
+			return turnPlan{Text: "当前页面为 PPG。只可使用 run_ppg_analysis(action=inspect/analyze) 检查或处理页面已选参数的 PPG 记录；用户要求处理时实际调用 analyze，结果会回填页面。不要调用 EEG/MNE 工具，也不要凭历史数据集 ID 操作。参数未确认时指出需要在页面修改的字段；信息问答不必运行分析。"}
+		}
+		if scope.Page == "help" || scope.Page == "sessions" || scope.Page == "history" || scope.Page == "datasets" {
+			return turnPlan{Text: "当前为 " + scope.Page + " 页面。按本轮页面上下文回答，允许知识检索及当前所选数据集的只读检查。不得自动执行信号处理或修改任务。需要执行时引导用户进入对应信号页面；不要把历史记录当作本轮执行结果。"}
+		}
+	}
+	return planTurn(question, datasetID)
 }
 
 var knowledgeCitation = regexp.MustCompile(`\[([A-Z][A-Z0-9-]*-[0-9]{3})\]\((https?://[^)\s]+)\)`)
@@ -64,7 +82,7 @@ func reflectTurn(answer string, trace []toolinput.ToolResult) string {
 	allCompleted := true
 	var beforeScore, afterScore *float64
 	for _, result := range trace {
-		if result.Succeeded && (result.Name == "run_neuro_analysis" || result.Name == "run_neurokit_analysis") {
+		if result.Succeeded && (result.Name == "run_neuro_analysis" || result.Name == "run_neurokit_analysis" || result.Name == "run_ppg_analysis") {
 			performed = true
 			saved = saved || result.Saved
 			if result.BeforeScore != nil && result.AfterScore != nil {
@@ -95,6 +113,29 @@ func reflectTurn(answer string, trace []toolinput.ToolResult) string {
 		return localized(answer, "本轮执行记录包含 skipped、degraded 或 failed 步骤，不能将其视为全部成功。请逐项核对 execution_plan 和质量报告。", "The execution record contains skipped, degraded, or failed steps. Review execution_plan and the quality report before claiming that every step succeeded.")
 	}
 	return answer
+}
+
+// 深度模式增加“本轮检索来源”核验；目录中存在并不证明这轮确实读过。
+// 这是确定性的出处检查，不声称自动验证所有科学结论，也不重跑有副作用的工具。
+func reflectModeTurn(ctx context.Context, answer string, trace []toolinput.ToolResult) string {
+	verified := reflectTurn(answer, trace)
+	if verified != answer || toolinput.CurrentResponsePolicy(ctx).Mode != "deep" {
+		return verified
+	}
+	seen := map[string]bool{}
+	for _, result := range trace {
+		if result.Succeeded {
+			for _, id := range result.KnowledgeIDs {
+				seen[id] = true
+			}
+		}
+	}
+	for _, match := range knowledgeCitation.FindAllStringSubmatch(answer, -1) {
+		if !seen[match[1]] {
+			return localized(answer, "回答引用了本轮未检索到的知识条目，尚未通过证据来源核验。请补充检索后再使用这些引用；本轮已执行操作的结果仍以工具记录为准。", "The answer cites knowledge not retrieved in this turn and has not passed source verification. Retrieve the missing evidence before using those citations; completed operations remain recorded in the tool results.")
+		}
+	}
+	return verified
 }
 
 func knowledgeCitationsValid(answer string) bool {

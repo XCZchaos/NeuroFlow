@@ -1,0 +1,34 @@
+/* Shared right-hand Agent is outside every routed page, including help and lists. */
+.app-content { display:grid; grid-template-columns:minmax(0,1fr) 340px; align-items:start; gap:0; }
+.app-content>main { width:100%; min-width:0; padding:30px 24px; }
+#global-agent-dock { position:sticky; top:90px; min-width:0; padding:16px 20px 16px 0; height:calc(100vh - 90px); }
+#global-agent-dock .agent-column { position:static; width:100%; height:100%; }
+#global-agent-dock .agent-card { height:100%; display:flex; flex-direction:column; min-height:450px; }
+#global-agent-dock .messages { flex:1; height:auto; min-height:120px; overflow:auto; }
+#global-agent-dock .agent-header,#global-agent-dock .agent-context,#global-agent-dock .response-mode,#global-agent-dock #chat-form,#global-agent-dock .suggestions,#global-agent-dock .agent-footnote { flex-shrink:0; }
+#global-agent-dock .note-card { display:none; }
+.app-content .workspace-grid { grid-template-columns:minmax(0,1fr); }
+.app-content .workspace-grid>.main-column { min-width:0; }
+.app-content .sleep-view { grid-template-columns:minmax(0,1fr); }
+.app-content #sleep-agent-host { display:none; }
+.app-content #workspace-view .mode-row { display:none; }
+.app-content .ppg-grid { grid-template-columns:minmax(0,1fr); }
+.app-content .ppg-settings { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 18px; }
+.app-content .ppg-settings h2,.app-content .ppg-settings details,.app-content .ppg-algorithm { grid-column:1/-1; }
+.app-content .help-layout { grid-template-columns:minmax(140px,.65fr) minmax(0,2fr); }
+.app-content.agent-collapsed { grid-template-columns:minmax(0,1fr); }
+.app-content.agent-collapsed #global-agent-dock { display:none; }
+.sidebar { overflow-y:auto; }
+.sidebar .nav-item>.i18n-text { width:auto; flex:1; font-size:12px; white-space:normal; line-height:1.4; text-align:left; }
+.sidebar-collapsed .sidebar .nav-item>.i18n-text { display:none; }
+#toggle-global-agent { padding:6px 10px; white-space:nowrap; font-size:11px; }
+@media(max-width:1150px) {
+  .app-content { grid-template-columns:minmax(0,1fr); }
+  #global-agent-dock { position:static; height:650px; padding:0 24px 24px; }
+  .app-content .help-layout { grid-template-columns:1fr; }
+}
+@media(max-width:700px) {
+  .app-content .ppg-settings { grid-template-columns:1fr; }
+  .app-content>main { padding:20px 14px; }
+  #global-agent-dock { padding:0 14px 20px; }
+}

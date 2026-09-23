@@ -78,6 +78,10 @@ func TestModelEnvironmentOverridesSensitiveFileValues(t *testing.T) {
 	t.Setenv("NEUROFLOW_LLM_API_BASE", "https://example.test/v1")
 	t.Setenv("NEUROFLOW_LLM_MODEL", "example-model")
 	t.Setenv("NEUROFLOW_LLM_MAX_TOKENS", "2048")
+	t.Setenv("NEUROFLOW_LLM_TEMPERATURE", "0.7")
+	t.Setenv("NEUROFLOW_LLM_PROVIDER", "deepseek")
+	t.Setenv("NEUROFLOW_LLM_CAPABILITIES_DETECTED", "true")
+	t.Setenv("NEUROFLOW_LLM_SUPPORTS_TEMPERATURE", "true")
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.json")
 	if err := os.WriteFile(configFile, []byte(`{"openai":{"api_key":"file-secret"}}`), 0600); err != nil {
@@ -88,7 +92,8 @@ func TestModelEnvironmentOverridesSensitiveFileValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.OpenAI.APIKey != "runtime-secret" || cfg.OpenAI.APIBase != "https://example.test/v1" ||
-		cfg.OpenAI.Model != "example-model" || cfg.OpenAI.MaxTokens != 2048 {
+		cfg.OpenAI.Model != "example-model" || cfg.OpenAI.MaxTokens != 2048 || cfg.OpenAI.Temperature != 0.7 ||
+		cfg.OpenAI.Provider != "deepseek" || !cfg.OpenAI.CapabilitiesDetected || !cfg.OpenAI.SupportsTemperature {
 		t.Fatalf("environment overrides were not applied: %+v", cfg.OpenAI)
 	}
 }

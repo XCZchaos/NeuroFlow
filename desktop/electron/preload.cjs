@@ -4,9 +4,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', Object.freeze({
   platform: process.platform,
   selectFiles: () => ipcRenderer.invoke('neuro:select-files'),
+  selectLabelFile: () => ipcRenderer.invoke('neuro:select-label-file'),
   selectBIDSRoot: () => ipcRenderer.invoke('neuro:select-bids-root'),
   loadModelConfig: () => ipcRenderer.invoke('neuro:model-config-load'),
   saveModelConfig: value => ipcRenderer.invoke('neuro:model-config-save', value),
+  testModelConfig: value => ipcRenderer.invoke('neuro:model-config-test', value),
   importModelConfig: () => ipcRenderer.invoke('neuro:model-config-import'),
   showOutput: relativePath => ipcRenderer.invoke('neuro:show-output', relativePath)
 }));

@@ -4,3 +4,22 @@
 .help-articles{min-width:0;padding:8px 34px 42px}.help-articles article{scroll-margin-top:94px;padding:27px 0;border-bottom:1px solid var(--border)}.help-articles article:last-child{border:0}.help-articles h3{margin:0 0 8px;color:#225e50;font-size:16px}.help-articles p{color:#60766d;font-size:11px;line-height:1.95;white-space:pre-line}.help-summary{margin:0 0 17px!important;color:#84968f!important}.help-articles article[hidden]{display:none}
 @media(max-width:900px){.help-layout{grid-template-columns:1fr}.help-toc{position:static;display:flex;gap:5px;max-height:none;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.help-toc a{white-space:nowrap}.help-articles{padding:5px 24px 34px}.help-heading{align-items:stretch;flex-direction:column}.help-heading input{width:100%}}
 @media(max-width:560px){.help-heading{padding:24px 20px}.help-articles{padding:4px 18px 28px}}
+/* 说明内容较长：目录、正文和操作列表分别排版，窄工作区改用横向目录。 */
+.help-view{container-type:inline-size}
+.help-heading>div{min-width:0}.help-heading h2{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.help-version{display:inline-block;padding:4px 9px;border:1px solid #c7ded5;border-radius:7px;font-size:12px;font-weight:650;color:#14735e;background:#fff}
+.help-heading p{font-size:13px;line-height:1.8}.help-heading input{min-width:0;flex-shrink:0}
+.help-toc a{font-size:12px}.help-toc a[hidden]{display:none}
+.help-articles p,.help-articles li{font-size:13px;line-height:1.9;overflow-wrap:anywhere}
+.help-articles h4{font-size:14px;color:#315f52;margin:20px 0 8px}
+.help-articles ul,.help-articles ol{padding-left:23px;color:#60766d}.help-articles li{padding-left:3px;margin:10px 0}
+.help-empty{padding:24px 0}.help-articles [hidden]{display:none}
+@container(max-width:680px){
+ .help-layout{grid-template-columns:1fr}.help-toc{position:static;display:flex;gap:5px;max-height:none;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}
+ .help-toc a{white-space:nowrap}.help-heading{align-items:stretch;flex-direction:column;padding:24px}.help-heading input{width:100%}.help-articles{padding:4px 24px 30px}
+}
+:root[data-theme="dark"] .help-heading{background:linear-gradient(135deg,#18352e,#142c27)}
+:root[data-theme="dark"] .help-toc,:root[data-theme="dark"] .help-heading input,:root[data-theme="dark"] .help-version{background:#172e28;border-color:#315249;color:#bad9cd}
+:root[data-theme="dark"] .help-heading h2,:root[data-theme="dark"] .help-articles h3,:root[data-theme="dark"] .help-articles h4{color:#d8eae4}
+:root[data-theme="dark"] .help-articles p,:root[data-theme="dark"] .help-articles li,:root[data-theme="dark"] .help-toc a{color:#b8cbc4}
+:root[data-theme="dark"] .help-toc a:hover{background:#214b3e;color:#d8eae4}

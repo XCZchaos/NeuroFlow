@@ -2,7 +2,7 @@
 
 面向 EEG、MEG 与 fNIRS 的本地智能分析工作台——融合 Electron、MNE、RAG 与 ReAct Agent，帮助研究者理解异构数据、执行可控预处理并获得可追溯结果。
 
-[![Release](https://img.shields.io/badge/release-v0.1-16846d)](https://github.com/XCZchaos/NeuroFlow/tree/v0.1)
+[![Version](https://img.shields.io/badge/version-v0.2-16846d)](https://github.com/XCZchaos/NeuroFlow)
 [![Go](https://img.shields.io/badge/Go-1.25.5-00ADD8?logo=go)](https://go.dev/)
 [![Electron](https://img.shields.io/badge/Electron-41-47848F?logo=electron)](https://www.electronjs.org/)
 [![MNE](https://img.shields.io/badge/MNE--Python-1.7%2B-7B5EA7)](https://mne.tools/)
@@ -20,16 +20,23 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的开源智能代理�
 
 三者协同工作：**MNE** 提供可验证的数据事实，**RAG** 提供领域知识，**ReAct Agent** 根据用户问题选择工具并组织回答。
 
-> **v0.1 能力边界：** EEG 支持确定性滤波参数搜索、坏道、参考、ICA、Epoch、ERP、Morlet 时频、折内 CSP＋LDA 解码与质量报告；MEG 支持空房 SSP、SSS/tSSS、滤波和审计；fNIRS 支持光密度、TDDR、Beer–Lambert、滤波与 HbO/HbR 汇总。SSS/tSSS 仍要求兼容的设备坐标信息，环境噪声处理要求单独导入空房 MEG 数据，解码结果默认只作为探索性折内估计。
+> **v0.2 能力边界：** EEG 支持确定性滤波参数搜索、坏道、参考、ICA、Epoch、ERP、Morlet 时频、折内 CSP＋LDA 解码与质量报告；MEG 支持空房 SSP、SSS/tSSS、滤波和审计；fNIRS 支持光密度、TDDR、Beer–Lambert、滤波与 HbO/HbR 汇总。另有 PPG 分析与待人工复核的睡眠候选标注。SSS/tSSS 仍要求兼容的设备坐标信息，环境噪声处理要求单独导入空房 MEG 数据，解码结果默认只作为探索性折内估计。
+
+软件内“使用说明”提供 20 个中英文离线章节，覆盖启动与模型配置、数据结构确认、各模态操作、睡眠标注、组件提问、长期会话、流式执行过程和常见故障。当前源码版本为 **v0.2**，桌面包版本为 `0.2.0`。
 
 ## 功能特性
 
-- **桌面工作台** - Electron 界面支持 EEG、MEG、fNIRS 模态切换、数据导入、流程编辑和 Agent 对话
+- **独立信号页面** - EEG、MEG、fNIRS 在侧栏各有页面，切换时保留各自选择的数据、流程参数与预览状态；共用预处理渲染器和已有算法实现
+- **全局 Agent 对话栏** - EEG、MEG、fNIRS、PPG、睡眠标注、数据管理、运行记录、长期对话和使用说明均可访问同一个会话；页面上下文随请求发送，服务端限制跨页面、跨数据集误操作。[页面与 Agent 设计](docs/workspace-pages.md)
+- **组件级 Agent 上下文** - 点击组件或用“选择组件”定位参数、波形、Epoch、质量和任务等区域，通过 `inspect_ui_component` 读取结构化状态；“解释此组件”只读，不触发处理。[使用与扩展说明](docs/component-context.md)
+- **PPG 信号处理页面** - 支持表格及 EDF/BDF/FIF/GDF 的指定通道，使用 NeuroKit2 Elgendi 清洗、检测脉搏峰和计算逐搏心率；可比较真实波形、缩放平移，并导出 JSON 与峰点 CSV。Agent 可调用 `run_ppg_analysis`，结果自动回填页面。[使用说明与代码位置](docs/ppg-workspace.md)
 - **自动格式适配** - 根据文件扩展名选择 MNE 读取器，新增格式时不需要修改整个导入流程
 - **结构探测与确认** - 支持 CSV、TSV、MAT 和带 JSON sidecar 的二进制数据，允许确认矩阵方向、单位、采样率、事件字典及通道配置
+- **外部标签管理** - 预处理工作台可自动匹配或手动导入 CSV、TSV、JSON 和 BIDS `events.tsv`，支持零/一起点、冲突检查、波形标记、编辑与删除，并统一转换为 MNE Annotations
 - **通道配置编辑** - 可修改名称与类型、标记采集参考、排除无关通道、匹配 montage，并查看真实坐标或无坐标顺序图
 - **元数据读取** - 获取格式、模态、通道数、通道名称、通道类型、采样率、时长、样本数和标注数量
 - **数据集上下文** - 为每次成功导入生成 `dataset_id`，Agent 可以查询对应的可信元数据
+- **持久化数据集注册表** - `dataset_id`、本地路径指纹和可信元数据保存在 SQLite，后端重启后只恢复路径与指纹仍有效的记录
 - **智能对话** - ReAct Agent 驱动的多轮对话，支持普通响应、流式响应与工具调用
 - **自动预处理** - Agent 可根据用户意图调用本地 Python/MNE，对 EEG 和 fNIRS 执行真实处理
 - **可恢复 Agent 任务** - 将待确认字段、用户原话、验证证据、执行计划和步骤状态持久化到 SQLite
@@ -110,7 +117,7 @@ NeuroFlow 是一个面向脑机接口与神经科学研究的开源智能代理�
 1. **克隆项目**
 
 ```bash
-git clone --branch v0.1 https://github.com/XCZchaos/NeuroFlow.git
+git clone https://github.com/XCZchaos/NeuroFlow.git
 cd NeuroFlow
 ```
 
@@ -246,14 +253,19 @@ BrainVision 数据需要保留配套的 `.vmrk` 和 `.eeg` 文件；外部存储
 
 ### Electron 打包版模型配置
 
-打包给其他用户时不需要附带 `config/config.json` 或开发者的 API Key。用户可在 Electron“连接设置”中填写 API Base、模型名称、API Key 和最大输出 token，也可以导入包含 `openai` 对象的项目配置 JSON 或只包含模型字段的 JSON。导入文件只读取一次，API Key 随即由 Electron `safeStorage` 使用操作系统凭据保护机制加密并保存到 Electron 的 `userData` 目录；渲染页面只能读取“是否已经配置”，不能取回密钥明文。
+打包给其他用户时不需要附带 `config/config.json` 或开发者的 API Key。用户可在 Electron“连接设置”中选择 OpenAI、DeepSeek 或通用 OpenAI Compatible 服务商，填写 API Base、模型名称、API Key 和最大输出 token，也可以导入 JSON。点击“测试模型能力”会用真实请求分别检查连接、temperature、stream、tool calling 和 JSON Schema 结构化输出，因此会产生少量 token 消耗。探测结果决定后端实际发送的可选参数，不再根据模型名称猜测能力。
+
+导入文件只读取一次，API Key 与能力探测结果随后由 Electron `safeStorage` 使用操作系统凭据保护机制加密并保存到 Electron 的 `userData` 目录；渲染页面只能读取“是否已经配置”，不能取回密钥明文。
 
 打包产物可以在 resources 中携带 `backend/neuroflow-backend.exe` 和不含密钥的 `config/config_template.json`。Electron 检测到这两个文件且用户已经保存模型配置后，会自动启动或重启 Go 后端，并通过仅属于该子进程的环境变量注入模型配置：
 
 - `NEUROFLOW_LLM_API_KEY`
 - `NEUROFLOW_LLM_API_BASE`
 - `NEUROFLOW_LLM_MODEL`
+- `NEUROFLOW_LLM_PROVIDER`
 - `NEUROFLOW_LLM_MAX_TOKENS`
+- `NEUROFLOW_LLM_CAPABILITIES_DETECTED`
+- `NEUROFLOW_LLM_SUPPORTS_TEMPERATURE`
 - `NEUROFLOW_CONFIG_FILE`
 
 开发模式仍可使用 `config/config.json`。如果在 Electron 中修改模型设置，而后端是从外部终端用 `go run ./cmd` 启动的，需要重启这个开发后端；Electron 只会自动管理随安装包携带的后端进程。
@@ -359,6 +371,19 @@ Content-Type: application/json
 
 `preview=true` 只使用候选配置重新读取，不会保存；去掉该参数或设为 `false` 后，只有验证成功才会原子保存到 `data/import-configs/`。配置带源文件大小与修改时间指纹，原文件改变后必须重新确认。该过程不修改原始文件。详细行为参见 [数据结构确认说明](docs/import-structure-review.md)。
 
+### 导入配套标签
+
+```http
+PUT /datasets/{dataset_id}/labels
+Content-Type: application/json
+
+{"path": "D:/study/sub-01_task-mi_events.tsv"}
+```
+
+标签文件支持 CSV、TSV 和 JSON。CSV/TSV 至少提供 `onset`/`time` 或 `sample`，以及 `label`/`event`/`trial_type`；`duration` 可省略。导入界面允许选择采样点按 0 或 1 起算。JSON 可以是对象数组，也可以将数组放在 `annotations` 或 `events` 字段中。系统会拒绝负时间、超出记录范围、空标签及缺少关键字段的内容，移除精确重复项，并报告区间重叠和仅大小写不同的类别名称。对于 `sub-01_task-mi_eeg.edf`，系统会尝试自动匹配同目录的 `sub-01_task-mi_events.tsv`。
+
+使用 `GET /datasets/{dataset_id}/labels` 查询可编辑标签，使用相同的 `PUT` 接口提交 `annotations` 数组，使用 `DELETE /datasets/{dataset_id}/labels` 删除外部标签。原始信号自带 annotations 会保留，外部标签与原始标签完全相同时不会重复加入。验证成功后，标准化标签保存在本地导入配置中；信号波形、Epoch、ERP、解码和 Agent 元数据检查会读取相同的 MNE Annotations。
+
 ### 执行真实预处理
 
 ```http
@@ -444,7 +469,7 @@ Electron 会在已导入数据时附加经过验证的元数据上下文和 `dat
 
 ### 长期对话记忆
 
-NeuroFlow 使用本机 `data/neuroflow.db` 保存会话、完整消息、研究目标、用户偏好和数据集绑定。该运行时数据库已被 Git 忽略。模型每次只读取最近 12 条原始消息，并读取由更早消息形成的长期摘要，避免上下文随对话无限增长。
+NeuroFlow 使用本机 `data/neuroflow.db` 保存会话、完整消息、研究目标、用户偏好、数据集绑定以及数据集注册表。后端重启时会根据保存的本地路径、文件大小和修改时间恢复仍然有效的 `dataset_id`；源文件缺失或指纹变化的记录不会重新加入可执行注册表。该运行时数据库已被 Git 忽略。模型每次只读取最近 12 条原始消息，并读取由更早消息形成的长期摘要，避免上下文随对话无限增长。
 
 ```http
 GET    /sessions
@@ -601,7 +626,7 @@ NeuroFlow/
 | `tests/` | 真实数据回归清单、公开数据下载器、统一执行器和框架端到端测试；大型数据本身不在仓库中 | 提交测试代码；数据不提交 |
 | `prometheusTestServer/` | 用来模拟指标与告警数据的独立 Go 服务，不是 NeuroFlow 主后端 | 源码和 Dockerfile 提交，编译出的 `testserver` 不提交 |
 | `prometheus_config/` | Prometheus 抓取目标和告警规则，配合根目录 Compose 文件使用 | 提交 |
-| `data/` | `neuroflow.db`、WAL 文件和 `import-configs/`；包含本地会话、用户偏好、任务状态和源文件导入配置 | 不提交 |
+| `data/` | `neuroflow.db`、WAL 文件和 `import-configs/`；包含本地会话、用户偏好、任务状态、数据集注册表和源文件导入配置 | 不提交 |
 | `outputs/` | 预处理后的 FIF、Epoch、JSON/HTML 审计报告，按 `dataset_id` 分目录保存 | 不提交 |
 | `log/` | Go 服务和启动脚本产生的标准输出、错误输出及应用日志 | 不提交 |
 | `tmp/` | 开发测试生成的截图、临时数据和本地编译文件 | 不提交 |
@@ -622,6 +647,8 @@ NeuroFlow/
 | `renderer/import-review.js` | 通道名称/类型、参考、排除、单位、矩阵方向和设备模板编辑器 |
 | `renderer/channel-layout.js` | Montage 坐标图、无坐标顺序图和通道选择联动 |
 | `renderer/signal-window.js` | 真实波形缓存、按窗口读取、缩放、拖动及 Shift＋滚轮控制 |
+| `renderer/ppg-view.js` / `ppg-view.css` | PPG 专用导入配置、真实波形、脉搏峰、心率曲线、时间导航与结果导出；支持中英文 |
+| `renderer/workspace-pages.js` / `workspace-pages.css` | 三个模态页面容器、全局 Agent 布局、页面上下文和专属快捷提问；状态保存与路由在 `app.js` |
 | `renderer/advanced-ui.js` | 后端步骤 SSE、持久化任务面板、BIDS 浏览器、MEG 参数和高级分析结果展示 |
 | `renderer/advanced-ui.css`、`batch.css`、`analysis-products.css` | 任务、批处理、BIDS、ERP/时频/解码结果组件样式 |
 | `renderer/styles.css`、`theme.css` | 组件布局、响应式样式和视觉主题 |
@@ -642,6 +669,7 @@ NeuroFlow/
 | `preview_dataset.py` | 按通道和时间范围读取真实信号，并抽稀为 Electron 可绘制数据 |
 | `analyze_dataset.py` | 调度 EEG/MEG/fNIRS MNE 流程，生成质量指标、波形、输出文件和审计记录 |
 | `neurokit_analysis.py` | 将已确认的 EEG 数据经 MNE 读取后交给 NeuroKit2，计算只读坏道候选、频带功率或 GFP 摘要；不保存预处理文件 |
+| `ppg_analysis.py` / `test_ppg_analysis.py` | PPG 表格读取、时间校验、NeuroKit2 清洗/脉搏峰/心率与数值回归测试；由 `internal/handler/ppg.go` 的本地 HTTP 接口调用 |
 | `advanced_analysis.py` | MEG SSS/tSSS/空房 SSP、确定性参数搜索及 ERP/时频/解码分析 |
 | `bids_catalog.py` | 枚举 BIDS recording 和实体，不加载完整采样数组 |
 | `test_*.py` | 结构化导入、导入确认和真实分析的回归测试 |
@@ -809,9 +837,11 @@ python tests/real_data/run_regression.py --data-root D:\NeuroFlowTestData --requ
 ```powershell
 cd desktop
 npm.cmd run check
+npm.cmd run test:model
+npm.cmd run test:ui
 ```
 
-信号交互的 Electron DOM 测试位于 `desktop/scripts/test-import-review.cjs`。它使用隐藏窗口和模拟后端响应，覆盖通道选择、缓存、Shift＋滚轮、连续缩放和时间边界；真实数据分析测试另外通过 Python/MNE 执行。
+模型能力测试使用模拟 OpenAI Compatible 响应验证五项探测，不消耗真实 API token。Electron DOM 测试位于 `desktop/scripts/test-import-review.cjs`，使用隐藏窗口和模拟后端响应，覆盖标签编辑/删除、模型能力展示、通道选择、缓存、Shift＋滚轮、连续缩放和时间边界；真实数据分析测试另外通过 Python/MNE 执行。
 
 ## 技术栈
 

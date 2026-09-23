@@ -1,0 +1,8 @@
+.agent-execution{margin:8px 0 12px;padding:10px 12px;border:1px solid var(--border,#d9e7e3);border-radius:10px;font-size:12px;line-height:1.6;background:var(--surface,#f6faf8)}
+.agent-execution summary{cursor:pointer;font-weight:600;overflow-wrap:anywhere}
+.agent-execution-note{opacity:.65;font-size:11px;margin:6px 0}
+.agent-execution ol{padding-left:18px;margin:4px 0;max-height:190px;overflow:auto}
+.agent-execution li{overflow-wrap:anywhere;margin:4px 0}
+.agent-execution li[data-state=running]{color:var(--accent,#128575)}
+.agent-execution li[data-state=failed],.agent-execution[data-state=failed] summary{color:#ac5739}
+.response-mode-description{margin:0 16px 10px;font-size:11px;line-height:1.65;color:var(--nf-subtle,#71897f)}

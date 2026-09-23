@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('ele
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { probeModelCapabilities } = require('./model-capabilities.cjs');
 let mainWindow;
 let backendProcess;
 
@@ -19,10 +20,18 @@ function saveModelConfig(value) {
   if(!model)throw new Error('Model name is required');
   const apiKey=String(value.api_key||'').trim()||previous.api_key;
   if(!apiKey)throw new Error('API Key is required');
-  const config={provider:'openai-compatible',api_base:base.replace(/\/$/,''),model,api_key:apiKey,max_tokens:Math.max(128,Math.min(32768,Number(value.max_tokens)||4096))};
+  const requestedTemperature=Number(value.temperature),temperature=Number.isFinite(requestedTemperature)?Math.max(0,Math.min(2,requestedTemperature)):Number(previous.temperature??1);
+  const allowedProviders=new Set(['openai','deepseek','openai-compatible']),provider=allowedProviders.has(value.provider)?value.provider:'openai-compatible';
+  const sameEndpoint=previous.api_base===base.replace(/\/$/,'')&&previous.model===model&&previous.provider===provider;
+  const capabilities=value.capabilities&&typeof value.capabilities==='object'?{
+    detected:Boolean(value.capabilities.detected),availability:Boolean(value.capabilities.availability),temperature:Boolean(value.capabilities.temperature),stream:Boolean(value.capabilities.stream),tool_calling:Boolean(value.capabilities.tool_calling),structured_output:Boolean(value.capabilities.structured_output),tested_at:String(value.capabilities.tested_at||''),details:Object.fromEntries(Object.entries(value.capabilities.details||{}).map(([key,detail])=>[key,String(detail).slice(0,500)]))
+  }:(Object.prototype.hasOwnProperty.call(value,'capabilities')?null:(sameEndpoint?previous.capabilities||null:null));
+  const config={provider,api_base:base.replace(/\/$/,''),model,api_key:apiKey,max_tokens:Math.max(128,Math.min(32768,Number(value.max_tokens)||4096)),temperature,capabilities};
   fs.mkdirSync(path.dirname(modelConfigPath()),{recursive:true});fs.writeFileSync(modelConfigPath(),safeStorage.encryptString(JSON.stringify(config)),{mode:0o600});return config;
 }
-function publicModelConfig(config) { return config?{provider:config.provider,api_base:config.api_base,model:config.model,max_tokens:config.max_tokens,has_api_key:Boolean(config.api_key)}:{provider:'openai-compatible',api_base:'https://api.openai.com/v1',model:'gpt-5',max_tokens:4096,has_api_key:false}; }
+function publicModelConfig(config) { return config?{provider:config.provider,api_base:config.api_base,model:config.model,max_tokens:config.max_tokens,temperature:Number(config.temperature??1),capabilities:config.capabilities||null,has_api_key:Boolean(config.api_key)}:{provider:'openai-compatible',api_base:'https://api.openai.com/v1',model:'gpt-5',max_tokens:4096,temperature:1,capabilities:null,has_api_key:false}; }
+
+async function testModelConfig(value){const previous=readModelConfig()||{},candidate={...previous,...value,api_key:String(value.api_key||'').trim()||previous.api_key};return probeModelCapabilities(candidate);}
 function bundledBackendPath(){
   const name=process.platform==='win32'?'neuroflow-backend.exe':'neuroflow-backend';
   return [path.join(process.resourcesPath,'backend',name),path.join(process.resourcesPath,name),path.resolve(__dirname,'..','backend',name)].find(fs.existsSync);
@@ -33,14 +42,15 @@ function startBundledBackend(){
   if(backendProcess){backendProcess.kill();backendProcess=null;}
   backendProcess=spawn(executable,[],{cwd:path.dirname(executable),windowsHide:true,env:{...process.env,
     NEUROFLOW_CONFIG_FILE:template,NEUROFLOW_LLM_API_KEY:config.api_key,NEUROFLOW_LLM_API_BASE:config.api_base,
-    NEUROFLOW_LLM_MODEL:config.model,NEUROFLOW_LLM_MAX_TOKENS:String(config.max_tokens)}});
+    NEUROFLOW_LLM_MODEL:config.model,NEUROFLOW_LLM_PROVIDER:config.provider,NEUROFLOW_LLM_MAX_TOKENS:String(config.max_tokens),NEUROFLOW_LLM_TEMPERATURE:String(config.temperature??1),
+    NEUROFLOW_LLM_CAPABILITIES_DETECTED:String(Boolean(config.capabilities?.detected)),NEUROFLOW_LLM_SUPPORTS_TEMPERATURE:String(Boolean(config.capabilities?.temperature))}});
   backendProcess.on('exit',()=>{backendProcess=null;});return true;
 }
 
 function createWindow() {
   const window = new BrowserWindow({
     width: 1510, height: 980, minWidth: 1000, minHeight: 720,
-    title: 'NeuroFlow · 神经信号工作台', backgroundColor: '#f5f7f8',
+    title: `NeuroFlow v${require('../package.json').version.replace(/\.0$/, '')} · 神经信号工作台`, backgroundColor: '#f5f7f8',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -61,6 +71,7 @@ function createWindow() {
 app.whenReady().then(() => {
   ipcMain.handle('neuro:model-config-load',()=>publicModelConfig(readModelConfig()));
   ipcMain.handle('neuro:model-config-save',(_event,value)=>{const saved=saveModelConfig(value||{});return {...publicModelConfig(saved),backend_restarted:startBundledBackend()};});
+  ipcMain.handle('neuro:model-config-test',async(_event,value)=>testModelConfig(value||{}));
   ipcMain.handle('neuro:model-config-import',async()=>{
     const result=await dialog.showOpenDialog(mainWindow,{title:'Import LLM configuration',properties:['openFile'],filters:[{name:'JSON',extensions:['json']}]});
     if(result.canceled)return null;
@@ -79,6 +90,16 @@ app.whenReady().then(() => {
       ]
     });
     return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle('neuro:select-label-file', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择配套标签文件', properties: ['openFile'],
+      filters: [
+        { name: '事件或阶段标签', extensions: ['csv', 'tsv', 'json'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    });
+    return result.canceled ? null : result.filePaths[0];
   });
   ipcMain.handle('neuro:select-bids-root', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {

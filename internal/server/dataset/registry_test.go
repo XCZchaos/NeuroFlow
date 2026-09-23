@@ -63,3 +63,58 @@ func TestGetUnknownDataset(t *testing.T) {
 		t.Fatal("unknown dataset must not exist")
 	}
 }
+
+func TestCompanionLabelMatching(t *testing.T) {
+	dir := t.TempDir()
+	signal := filepath.Join(dir, "sub-01_task-mi_eeg.edf")
+	events := filepath.Join(dir, "sub-01_task-mi_events.tsv")
+	if err := os.WriteFile(signal, []byte("placeholder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(events, []byte("onset\ttrial_type\n0\tleft\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := companionLabelPath(signal); got != events {
+		t.Fatalf("companion match = %q, want %q", got, events)
+	}
+}
+
+func TestRegistryRestoresStableIDAndRejectsChangedSource(t *testing.T) {
+	dir := t.TempDir()
+	database := filepath.Join(dir, "neuroflow.db")
+	path := filepath.Join(dir, "sample.csv")
+	if err := os.WriteFile(path, []byte("time,C3\n0,10\n0.004,11\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitRegistry(database); err != nil {
+		t.Fatal(err)
+	}
+	record, err := Register(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records.Delete(record.ID)
+	if err = CloseRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	if err = InitRegistry(database); err != nil {
+		t.Fatal(err)
+	}
+	if restored, ok := Get(record.ID); !ok || restored.ID != record.ID {
+		t.Fatalf("dataset was not restored: %+v %v", restored, ok)
+	}
+	if err = CloseRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	records.Delete(record.ID)
+	if err = os.WriteFile(path, []byte("time,C3\n0,9999\n0.004,9898\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err = InitRegistry(database); err != nil {
+		t.Fatal(err)
+	}
+	defer CloseRegistry()
+	if _, ok := Get(record.ID); ok {
+		t.Fatal("changed source fingerprint must invalidate restored dataset")
+	}
+}

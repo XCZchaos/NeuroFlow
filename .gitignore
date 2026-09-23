@@ -33,6 +33,7 @@ myapp
 /.runtime/
 /.qdrant-initialized
 /.cache/
+/.tmp-go-cache/
 /tmp/
 
 # Python runtime files

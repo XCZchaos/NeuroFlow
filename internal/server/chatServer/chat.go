@@ -40,9 +40,13 @@ func NewChatServer(log *logrus.Logger, runner compose.Runnable[*chat.UserMessage
 }
 
 func (c *chatServer) Chat(ctx context.Context, question string, id string, responseMode string) (string, error) {
+	ctx = toolinput.WithResponseMode(ctx, responseMode)
 	session, err := c.memory.EnsureSession(ctx, id)
 	if err != nil {
 		return "", err
+	}
+	if scope, ok := toolinput.CurrentWorkspace(ctx); ok {
+		session.DatasetID = scope.DatasetID
 	}
 	history, err := c.memory.Messages(ctx, id, recentMessageWindow)
 	if err != nil {
@@ -60,7 +64,7 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string, respo
 	// 同步和流式入口都把本轮原话传给工具层，供模型参数的来源核验使用。
 	// 这份上下文不改变展示给模型的消息，也不会写入长期记忆。
 	ctx = toolinput.WithUserText(ctx, question)
-	plan := planTurn(question, session.DatasetID)
+	plan := planWorkspaceTurn(ctx, toolinput.IntentText(ctx, question), session.DatasetID)
 	trace := &toolinput.Trace{}
 	ctx = toolinput.WithTrace(ctx, trace)
 	output, err := c.runner.Invoke(ctx, &chat.UserMessage{
@@ -69,7 +73,7 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string, respo
 		History:      history,
 		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
-		WorkflowPlan: plan.Text,
+		WorkflowPlan: plan.Text + toolinput.UIContextInstruction(ctx),
 	})
 	if err != nil {
 		c.logger.Errorf("Agent 调用失败, session_id=%s, err=%v", id, err)
@@ -77,7 +81,7 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string, respo
 	}
 
 	// Reflection 在答案写入长期会话前执行，避免未核验的完成声明成为后续记忆。
-	answer := reflectTurn(output.Content, trace.Snapshot())
+	answer := reflectModeTurn(ctx, output.Content, trace.Snapshot())
 	if err = c.memory.AppendTurn(ctx, id, question, answer); err != nil {
 		return "", err
 	}
@@ -85,6 +89,8 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string, respo
 }
 
 func (c *chatServer) ChatSream(ctx context.Context, question string, id string, responseMode string, msgChan *chan string, doneChan *chan struct{}) error {
+	ctx = toolinput.WithResponseMode(ctx, responseMode)
+	toolinput.StreamPhase(ctx, "context")
 	defer close(*msgChan)
 	defer func() {
 		select {
@@ -96,6 +102,9 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 	session, err := c.memory.EnsureSession(ctx, id)
 	if err != nil {
 		return err
+	}
+	if scope, ok := toolinput.CurrentWorkspace(ctx); ok {
+		session.DatasetID = scope.DatasetID
 	}
 	history, err := c.memory.Messages(ctx, id, recentMessageWindow)
 	if err != nil {
@@ -110,34 +119,47 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 		return err
 	}
 	ctx = toolinput.WithUserText(ctx, question)
-	plan := planTurn(question, session.DatasetID)
+	plan := planWorkspaceTurn(ctx, toolinput.IntentText(ctx, question), session.DatasetID)
 	trace := &toolinput.Trace{}
 	ctx = toolinput.WithTrace(ctx, trace)
+	toolinput.StreamPhase(ctx, "model")
 	output, err := c.runner.Stream(ctx, &chat.UserMessage{
 		ID:           id,
 		Query:        question,
 		History:      history,
 		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
-		WorkflowPlan: plan.Text,
+		WorkflowPlan: plan.Text + toolinput.UIContextInstruction(ctx),
 	})
 	if err != nil {
 		c.logger.Errorf("Agent 流式调用失败, session_id=%s, err=%v", id, err)
 		return fmt.Errorf("Agent 流式调用失败: %w", err)
 	}
 
+	defer output.Close()
+	return c.forwardStream(ctx, output, trace, plan.RequiresVerification, id, question, msgChan)
+}
+
+// 实时展示草稿，结束后再核验。核验改写通过 replace 原子替换，避免重复答案；
+// 未支持事件协议的旧调用方保留原先先核验后输出的行为。
+func (c *chatServer) forwardStream(ctx context.Context, output *schema.StreamReader[*schema.Message], trace *toolinput.Trace, verify bool, id, question string, msgChan *chan string) error {
 	var response strings.Builder
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		default:
 		}
 
 		message, receiveErr := output.Recv()
 		if errors.Is(receiveErr, io.EOF) {
-			verified := reflectTurn(response.String(), trace.Snapshot())
-			if plan.RequiresVerification {
+			toolinput.StreamPhase(ctx, "verification")
+			verified := reflectModeTurn(ctx, response.String(), trace.Snapshot())
+			if toolinput.HasStreamEvents(ctx) {
+				if verified != response.String() {
+					toolinput.EmitStream(ctx, "replace", verified)
+				}
+			} else if verify {
 				// 执行性请求要先核验完整回答，再发送给界面；普通问答仍逐块流式输出。
 				select {
 				case *msgChan <- verified:
@@ -157,8 +179,15 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 			c.logger.Errorf("接收 Agent 流失败, session_id=%s, err=%v", id, receiveErr)
 			return fmt.Errorf("接收 Agent 流失败: %w", receiveErr)
 		}
+		if message == nil || message.Content == "" {
+			continue
+		}
 		response.WriteString(message.Content)
-		if plan.RequiresVerification {
+		if toolinput.HasStreamEvents(ctx) {
+			toolinput.EmitStream(ctx, "message", message.Content)
+			continue
+		}
+		if verify {
 			continue
 		}
 		select {
@@ -207,6 +236,9 @@ func (c *chatServer) Task(ctx context.Context, id string) (*taskstate.State, err
 	return provider.TaskStore().Get(ctx, id)
 }
 func (c *chatServer) taskContext(ctx context.Context, session Session, question string) (context.Context, string, error) {
+	if scope, ok := toolinput.CurrentWorkspace(ctx); ok && (scope.DatasetID == "" || (scope.Page != "eeg" && scope.Page != "meg" && scope.Page != "fnirs" && scope.Page != "sleep")) {
+		return ctx, "", nil
+	}
 	provider, ok := c.memory.(interface{ TaskStore() *taskstate.Store })
 	if !ok {
 		return ctx, "", nil
@@ -217,6 +249,9 @@ func (c *chatServer) taskContext(ctx context.Context, session Session, question 
 	}
 	ctx = taskstate.WithScope(ctx, taskstate.Scope{Store: provider.TaskStore(), SessionID: session.ID, DatasetID: session.DatasetID, UserMessage: question})
 	if state == nil {
+		return ctx, "", nil
+	}
+	if _, scoped := toolinput.CurrentWorkspace(ctx); scoped && state.DatasetID != session.DatasetID {
 		return ctx, "", nil
 	}
 	// Full results/audit stay queryable by tool/API, but do not grow the prompt.

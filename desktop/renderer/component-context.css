@@ -1,0 +1,9 @@
+.component-agent-toolbar { padding:9px 16px; border-bottom:1px solid var(--border); font-size:11px; flex-shrink:0; }
+#agent-component-focus { color:var(--muted); line-height:1.5; margin-bottom:6px; overflow-wrap:anywhere; }
+.component-agent-toolbar>div:last-child { display:flex; gap:6px; }
+.component-agent-toolbar button { border:1px solid var(--border); border-radius:7px; background:transparent; color:var(--green,#16846d); padding:5px 8px; font-size:10px; }
+.component-agent-toolbar button:disabled { opacity:.4; cursor:not-allowed; }
+.agent-component-selected { outline:2px solid #76bbaa; outline-offset:3px; }
+.agent-component-hover { outline:3px dashed #16846d; outline-offset:3px; }
+.agent-component-picking main,.agent-component-picking main * { cursor:crosshair!important; }
+@media(prefers-reduced-motion:no-preference){.agent-component-selected{transition:outline-color .12s;}}
