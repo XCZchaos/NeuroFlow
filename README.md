@@ -185,6 +185,21 @@ go run ./cmd
 
 服务将在 `http://localhost:8819` 启动。
 
+开发时可改用 **Air 自动重载**：保存 `cmd/`、`internal/`、`pkg/` 中的 Go 文件后自动重新编译并重启，无需每次手动执行 `go run`。
+
+```powershell
+# 首次安装到项目本地工具目录（不修改 go.mod）
+$env:GOBIN = Join-Path (Get-Location) '.tools\bin'
+go install github.com/air-verse/air@latest
+
+# 前台启动，Ctrl+C 停止；不要同时启动另一个 go run 进程
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-go.ps1
+```
+
+后台运行可加 `-Background`；查看和停止后台监控分别使用 `-Action Status`、`-Action Stop`。日志位于 `.cache/air/watcher.stdout.log` 和 `watcher.stderr.log`，编译错误另存 `build-errors.log`。`.air.toml` 排除了 Electron、数据、日志和生成目录，避免写入结果时反复重启。保存测试文件不会触发重载。编译出错时停止旧版本，修正代码后保存即可重新启动。
+
+自动重载会中断当前请求，仅用于开发。Go 重启后，Electron 会在连接或发送消息前重新应用已保存的模型设置；Qdrant 和 embedding 服务仍需正常运行。
+
 8. **启动 Electron 前端**
 
 另开一个终端：
@@ -268,7 +283,7 @@ BrainVision 数据需要保留配套的 `.vmrk` 和 `.eeg` 文件；外部存储
 - `NEUROFLOW_LLM_SUPPORTS_TEMPERATURE`
 - `NEUROFLOW_CONFIG_FILE`
 
-开发模式仍可使用 `config/config.json`。如果在 Electron 中修改模型设置，而后端是从外部终端用 `go run ./cmd` 启动的，需要重启这个开发后端；Electron 只会自动管理随安装包携带的后端进程。
+开发模式仍可使用 `config/config.json`。Electron 的“保存、核对并应用”支持将模型设置传入正在运行的本机 Go 后端；修改源码则需重新编译，可通过 Air 自动完成。单独启动 Go 时先读取文件和环境变量，Electron 连接后再应用其加密保存的配置。
 
 ## API 文档
 
@@ -507,7 +522,7 @@ GET    /sessions/:id/task
 
 当预处理依赖缺失的采样率、单位、矩阵方向、通道配置、montage 或事件含义时，Agent 会通过 `manage_preprocessing_task` 保存问题与完整执行计划，再向用户询问。用户回答后，Agent 记录结构化值及其原话，使用 MNE 重新读取并验证文件；验证通过才恢复原计划。
 
-完整预处理现在统一由后端 Workflow 控制：`start` 持久化方案与待确认字段，`validate` 重新读取并检查数据，`resume` 执行 MNE 并核验结果、步骤状态及保存状态。即使没有待确认字段，也必须经过这些阶段；Agent 直接调用 `run_neuro_analysis` 的 `full` 模式会被拒绝。`summary` 和 `quality` 仍可用于只读诊断。任务的 `verify_result` 步骤与审计事件可在 Electron 任务面板查看；若执行或核验失败，任务进入失败状态，用户明确要求重试后才可继续。
+完整预处理由后端 Workflow 控制。新的任务只需调用一次 `run_neuro_analysis(full)`，后端连续完成 `start` 持久化方案、`validate` 重新检查数据、`resume` 执行 MNE 与结果核验。缺少必要信息时返回 `waiting_for_input`，已有任务通过 `manage_preprocessing_task` 的 `get/answer/validate/resume` 继续；不能另建任务绕过确认。`summary`、`quality` 和 NeuroKit2 只读诊断不会因无关任务等待而被禁止；MNE 诊断不保存处理文件，也不修改待确认任务。事件含义只阻塞依赖事件的步骤。任务的 `verify_result` 与审计事件仍可在 Electron 查看；失败或重启中断后的处理重试仍需要明确授权。
 
 任务状态与会话一同保存在 `data/neuroflow.db`，不依赖最近消息窗口或长期摘要。每次更新带 revision，能够拦截并发覆盖和重复执行；后端在执行过程中重启时会将任务标记为 `interrupted`，不会自动重复可能已经产生文件的操作。可通过以下接口查看最新状态：
 
@@ -745,7 +760,9 @@ Agent 可以自主选择：
 
 系统提示词要求 Agent 区分“文件已经证明的事实”“建议的处理方案”和“已经执行的结果”。
 
-数据操作采用三段流程：Go 后端根据会话绑定、文件结构和任务目标生成本轮检查计划；Eino ReAct Agent 根据工具观察结果选择下一步；工具把成功执行、保存状态、步骤状态和质量评分写入本轮证据记录，后端在回答入库及展示前核对“已完成”“已保存”“质量改善”等执行性结论，并核对知识引用的 ID 和官方来源。对执行性请求，流式文本会先缓冲至核验完成；普通问答仍逐块输出。该核验是确定性检查，不是第二个大模型 Agent，也不能替代研究者对科学结论的复核。
+数据操作采用三段流程：Go 根据会话绑定、文件结构和目标提供执行边界；Eino ReAct 根据工具观察结果选择下一步；后端核对执行、保存、质量评分及知识引用。Electron 正文持续流式显示，结束时进行确定性核验；不一致时允许同一模型补查并修正一次，再通过 `replace` 更新最终回答。修正阶段最多 45 秒、8 个图步骤，仅能查询证据、元数据和任务状态，不能重复分析或保存；修正仍未通过时显示可核验的反馈。SQLite 只保存最终答复。这是受约束的回答修正，不替代研究者复核科学结论。
+
+执行已确认的参数和只读检查不要求 RAG 必须命中；未知方法需定向补查，无证据就明确说明，不能编造来源。知识服务故障会作为工具观察返回，供 Agent 继续完成有依据的部分。数据管理和运行记录页绑定当前文件后也允许只读诊断，完整处理仍在对应信号页面执行。
 
 ### 4. RAG 工具
 
@@ -760,6 +777,8 @@ Agent 可以自主选择：
 向量相似度只负责召回候选知识，不能证明条目适用于当前数据。Agent 需要结合文件事实和条目的适用条件判断；覆盖不足时应继续检索或明确说明证据不足。知识格式参见 [`docs/knowledge/SCHEMA.md`](docs/knowledge/SCHEMA.md)。
 
 ## 开发指南
+
+Agent 的设计与扩展遵循[工程原则与验证标准](docs/agent-engineering.md)：参考 Anthropic 官方工程说明，由程序保持执行边界，模型依据真实工具反馈选择后续动作。文档包含职责划分、工具状态协议、代码入口和行为回归用例。
 
 ### 添加新文件格式
 
@@ -804,7 +823,7 @@ func NewMyTool() (tool.InvokableTool, error) {
 }
 ```
 
-工具应返回可验证的结构化结果。不要让模型生成任意 Python 或 Shell 代码后直接执行。
+工具应返回可验证的结构化结果，并写明选择条件、参数示例、错误含义和副作用。任务工具的 `ok=true` 不代表处理完成，必须区分 `status`、`completed`、未答字段和验证冲突。不要让模型生成任意 Python 或 Shell 代码后直接执行。
 
 ### 扩展知识库
 
@@ -839,6 +858,8 @@ cd desktop
 npm.cmd run check
 npm.cmd run test:model
 npm.cmd run test:ui
+npm.cmd run test:stream
+npm.cmd run test:lifecycle
 ```
 
 模型能力测试使用模拟 OpenAI Compatible 响应验证五项探测，不消耗真实 API token。Electron DOM 测试位于 `desktop/scripts/test-import-review.cjs`，使用隐藏窗口和模拟后端响应，覆盖标签编辑/删除、模型能力展示、通道选择、缓存、Shift＋滚轮、连续缩放和时间边界；真实数据分析测试另外通过 Python/MNE 执行。

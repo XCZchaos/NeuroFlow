@@ -11,6 +11,7 @@ type traceKey struct{}
 type ToolResult struct {
 	Name         string
 	DatasetID    string
+	AnalysisType string // summary/quality/full，防止只读诊断被当成已执行预处理。
 	Succeeded    bool
 	Saved        bool
 	Steps        map[string]string

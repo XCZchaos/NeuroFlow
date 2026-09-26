@@ -15,7 +15,6 @@
 .app-content .ppg-grid { grid-template-columns:minmax(0,1fr); }
 .app-content .ppg-settings { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 18px; }
 .app-content .ppg-settings h2,.app-content .ppg-settings details,.app-content .ppg-algorithm { grid-column:1/-1; }
-.app-content .help-layout { grid-template-columns:minmax(140px,.65fr) minmax(0,2fr); }
 .app-content.agent-collapsed { grid-template-columns:minmax(0,1fr); }
 .app-content.agent-collapsed #global-agent-dock { display:none; }
 .sidebar { overflow-y:auto; }
@@ -25,7 +24,6 @@
 @media(max-width:1150px) {
   .app-content { grid-template-columns:minmax(0,1fr); }
   #global-agent-dock { position:static; height:650px; padding:0 24px 24px; }
-  .app-content .help-layout { grid-template-columns:1fr; }
 }
 @media(max-width:700px) {
   .app-content .ppg-settings { grid-template-columns:1fr; }

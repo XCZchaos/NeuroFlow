@@ -138,9 +138,8 @@
   }
 
   async function autoStage() {
-	// The primary action deliberately enters through ReAct. The model receives
-	// the user's explicit intent, selects suggest_sleep_stages, and explains the
-	// outcome. The page then fetches the locally cached per-epoch result.
+    // 复用共享对话入口：明确的分期请求先由工作流执行，真实候选通过事件回填，
+    // 再由模型解释结果。页面状态由共享入口单独附加，不伪装成用户原话。
 	const inspection = model.snapshot?.inspection || {};
 	const report = inspection.structure_report || {};
 	// Match the server-side tool guard before spending an LLM request. Warnings
@@ -155,14 +154,10 @@
 		? 'Inspect the bound sleep recording and call the sleep-staging tool now. Generate 30-second W/N1/N2/N3/REM candidates and tell me what needs review.'
 		: '请检查当前绑定的睡眠记录，现在调用睡眠自动分期工具，生成每 30 秒的 W/N1/N2/N3/REM 候选标签，并说明需要复核的内容。';
 	const automatic = $('#sleep-auto-stage'); automatic.disabled = true;
-	const context = locale() === 'en'
-		? `[Interface language: English]\n[Sleep workspace: dataset_id=${model.snapshot?.datasetId}; 30-second epochs=${model.epochs.length}; scored=${model.epochs.filter(item => item.stage).length}; review-required Agent candidates=${model.epochs.filter(item => item.source === 'agent_candidate' && !item.reviewed).length}]\n${prompt}`
-		: `[界面语言：简体中文]\n[睡眠标注上下文：dataset_id=${model.snapshot?.datasetId}；30秒 Epoch 数=${model.epochs.length}；已标注=${model.epochs.filter(item => item.stage).length}；待复核 Agent 候选=${model.epochs.filter(item => item.source === 'agent_candidate' && !item.reviewed).length}]\n${prompt}`;
     try {
-	  await global.NeuroFlowWorkspace.sendAgentMessage(context);
-      const latest = await global.NeuroFlowWorkspace.latestSleepStages();
-      const count = applyCandidates(latest);
-	  if (count) global.NeuroFlowWorkspace.notify(t('candidateApplied').replace('{count}', count));
+      await global.NeuroFlowWorkspace.sendAgentMessage(prompt);
+      // 候选已由 neuroflow:sleepstages 事件应用。这里不能在请求结束/取消后
+      // 另查“当前”文件的结果，否则切换页面时可能把旧任务结果写入新记录。
     } catch (error) {
 	  global.NeuroFlowWorkspace.notify(t('candidateFailed') + error.message);
 	} finally { automatic.disabled = false; }
@@ -252,33 +247,33 @@
     const ratio = devicePixelRatio || 1, width = Math.max(500, canvas.clientWidth), height = 310;
     canvas.width = width * ratio; canvas.height = height * ratio;
     const ctx = canvas.getContext('2d'); ctx.scale(ratio, ratio); ctx.clearRect(0, 0, width, height);
-    const dark = document.documentElement.dataset.theme === 'dark';
+    const palette=global.NeuroTheme.palette();
     const series = preview?.data || [], labels = preview?.channel_names || [];
-    if (!series.length) { ctx.fillStyle = dark ? '#8ea9a0' : '#849790'; ctx.font = '12px Segoe UI'; ctx.textAlign = 'center'; ctx.fillText(t('noSleepChannels'), width / 2, height / 2); ctx.textAlign = 'left'; return; }
+    if (!series.length) { ctx.fillStyle = palette.text; ctx.font = '12px Segoe UI'; ctx.textAlign = 'center'; ctx.fillText(t('noSleepChannels'), width / 2, height / 2); ctx.textAlign = 'left'; return; }
     const left = 65, right = 12, top = 12, bottom = 24, plotW = width - left - right, rowH = (height - top - bottom) / series.length;
     ctx.font = '10px Segoe UI'; ctx.lineWidth = 1;
     series.forEach((values, row) => {
       const center = top + rowH * (row + .5), numeric = values.map(Number).filter(Number.isFinite);
       const peak = Math.max(1e-9, ...numeric.map(value => Math.abs(value)));
-      ctx.strokeStyle = dark ? '#29483f' : '#e5eeea'; ctx.beginPath(); ctx.moveTo(left, center); ctx.lineTo(width - right, center); ctx.stroke();
-      ctx.fillStyle = dark ? '#a9c4ba' : '#647d74'; ctx.fillText(labels[row] || `CH${row + 1}`, 5, center + 3);
-      ctx.strokeStyle = row % 3 === 0 ? '#4d927e' : row % 3 === 1 ? '#9871d4' : '#5b7fa3'; ctx.beginPath();
+      ctx.strokeStyle = palette.grid; ctx.beginPath(); ctx.moveTo(left, center); ctx.lineTo(width - right, center); ctx.stroke();
+      ctx.fillStyle = palette.text; ctx.fillText(labels[row] || `CH${row + 1}`, 5, center + 3);
+      ctx.strokeStyle = palette.traces[row % palette.traces.length]; ctx.beginPath();
       numeric.forEach((value, index) => { const x = left + index / Math.max(1, numeric.length - 1) * plotW, y = center - value / peak * rowH * .38; if (index) ctx.lineTo(x, y); else ctx.moveTo(x, y); }); ctx.stroke();
     });
-    ctx.fillStyle = dark ? '#8ea9a0' : '#849790'; ctx.fillText(formatTime(model.current * 30), left, height - 7); ctx.textAlign = 'right'; ctx.fillText(formatTime(Math.min(model.duration, (model.current + 1) * 30)), width - right, height - 7); ctx.textAlign = 'left';
+    ctx.fillStyle = palette.text; ctx.fillText(formatTime(model.current * 30), left, height - 7); ctx.textAlign = 'right'; ctx.fillText(formatTime(Math.min(model.duration, (model.current + 1) * 30)), width - right, height - 7); ctx.textAlign = 'left';
   }
 
   function drawHypnogram() {
     const canvas = $('#sleep-hypnogram'); if (!canvas) return;
     const ratio = devicePixelRatio || 1, width = Math.max(500, canvas.clientWidth), height = 190;
     canvas.width = width * ratio; canvas.height = height * ratio; const ctx = canvas.getContext('2d'); ctx.scale(ratio, ratio);
-    const dark = document.documentElement.dataset.theme === 'dark'; ctx.clearRect(0, 0, width, height); ctx.font = '11px Segoe UI';
+    const palette=global.NeuroTheme.palette(); ctx.clearRect(0, 0, width, height); ctx.font = '11px Segoe UI';
     const top = 18, bottom = 30, plotH = height - top - bottom, row = plotH / stages.length;
-    stages.forEach((stage, i) => { const y = top + i * row + row / 2; ctx.fillStyle = dark ? '#9db8af' : '#71877f'; ctx.fillText(stage, 8, y + 4); ctx.strokeStyle = dark ? '#29483f' : '#e5eeea'; ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(width - 12, y); ctx.stroke(); });
+    stages.forEach((stage, i) => { const y = top + i * row + row / 2; ctx.fillStyle = palette.text; ctx.fillText(stage, 8, y + 4); ctx.strokeStyle = palette.grid; ctx.beginPath(); ctx.moveTo(40, y); ctx.lineTo(width - 12, y); ctx.stroke(); });
     const plotW = width - 54, cell = plotW / model.epochs.length;
     model.epochs.forEach((epoch, index) => { if (!epoch.stage) return; const y = top + stages.indexOf(epoch.stage) * row; ctx.fillStyle = colors[epoch.stage]; ctx.fillRect(42 + index * cell, y + 2, Math.max(1, cell + .4), row - 4); if (epoch.artifact) { ctx.fillStyle = '#e05e5e'; ctx.fillRect(42 + index * cell, top, Math.max(1, cell + .4), 3); } });
-    const x = 42 + model.current * cell; ctx.strokeStyle = dark ? '#fff' : '#173f35'; ctx.lineWidth = 2; ctx.strokeRect(x, top - 3, Math.max(2, cell), plotH + 6);
-    ctx.fillStyle = dark ? '#9db8af' : '#71877f'; ctx.fillText('00:00', 42, height - 9); ctx.fillText(formatTime(model.duration), width - 62, height - 9);
+    const x = 42 + model.current * cell; ctx.strokeStyle = palette.accent; ctx.lineWidth = 2; ctx.strokeRect(x, top - 3, Math.max(2, cell), plotH + 6);
+    ctx.fillStyle = palette.text; ctx.fillText('00:00', 42, height - 9); ctx.fillText(formatTime(model.duration), width - 62, height - 9);
   }
   function exportFile(kind) {
     const rows = model.epochs.map((e, i) => ({ epoch: i + 1, onset_seconds: i * 30, duration_seconds: Math.min(30, model.duration - i * 30), stage: e.stage || 'UNSCORED', artifact: e.artifact, source: e.source || '', confidence: e.confidence ?? '', reviewed: Boolean(e.reviewed), note: e.note }));
@@ -303,6 +298,7 @@
     $('#sleep-export-json').addEventListener('click', () => exportFile('json')); $('#sleep-export-csv').addEventListener('click', () => exportFile('csv'));
     $('#sleep-hypnogram').addEventListener('click', event => { const box = event.currentTarget.getBoundingClientRect(); selectEpoch(Math.floor((event.clientX - box.left - 42) / Math.max(1, box.width - 54) * model.epochs.length)); });
     global.addEventListener('resize', () => { if (!$('#sleep-view').hidden) { drawHypnogram(); drawWaveform(model.waveform); } });
+    document.addEventListener('neuroflow:themechange', () => { if (!$('#sleep-view').hidden) { drawHypnogram(); drawWaveform(model.waveform); } });
     document.addEventListener('keydown', event => { if ($('#sleep-view').hidden || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return; const map = {'0':'W','1':'N1','2':'N2','3':'N3','4':'REM'}; if (map[event.key]) setStage(map[event.key]); else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); clearStage(); } else if (event.key.toLowerCase() === 'a') { model.epochs[model.current].artifact = !model.epochs[model.current].artifact; persist(); render(); } else if (event.key === 'ArrowLeft') selectEpoch(model.current - 1); else if (event.key === 'ArrowRight') selectEpoch(model.current + 1); });
     const observer = new MutationObserver(() => { if (!$('#sleep-view').hidden) load(); });
     observer.observe($('#file-name'), { childList: true, characterData: true, subtree: true });

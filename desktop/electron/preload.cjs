@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('desktop', Object.freeze({
   loadModelConfig: () => ipcRenderer.invoke('neuro:model-config-load'),
   saveModelConfig: value => ipcRenderer.invoke('neuro:model-config-save', value),
   testModelConfig: value => ipcRenderer.invoke('neuro:model-config-test', value),
-  importModelConfig: () => ipcRenderer.invoke('neuro:model-config-import'),
+  importModelConfig: backendURL => ipcRenderer.invoke('neuro:model-config-import', backendURL),
+  syncModelConfig: backendURL => ipcRenderer.invoke('neuro:model-config-sync', backendURL),
+  testActiveAgent: value => ipcRenderer.invoke('neuro:model-agent-test', value),
   showOutput: relativePath => ipcRenderer.invoke('neuro:show-output', relativePath)
 }));

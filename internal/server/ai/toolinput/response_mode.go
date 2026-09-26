@@ -30,7 +30,7 @@ func CurrentResponsePolicy(ctx context.Context) ResponsePolicy {
 	return Policy(mode)
 }
 
-// 原始提问只用于检索路由；权限、文件绑定和“不保存”等约束仍由原有守卫处理。
+// 原始提问用于检索路由与会话展示/记忆；权限、文件绑定和“不保存”等约束仍由原有守卫处理。
 // 旧客户端未提供此字段时回退到完整问题，宁可多检索，不误当作简单问题。
 func WithIntentText(ctx context.Context, query string) context.Context {
 	return context.WithValue(ctx, intentTextKey{}, strings.TrimSpace(query))

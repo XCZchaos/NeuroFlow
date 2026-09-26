@@ -67,22 +67,31 @@ func (c *chatServer) Chat(ctx context.Context, question string, id string, respo
 	plan := planWorkspaceTurn(ctx, toolinput.IntentText(ctx, question), session.DatasetID)
 	trace := &toolinput.Trace{}
 	ctx = toolinput.WithTrace(ctx, trace)
-	output, err := c.runner.Invoke(ctx, &chat.UserMessage{
+	input := &chat.UserMessage{
 		ID:           id,
 		Query:        question,
 		History:      history,
 		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
 		WorkflowPlan: plan.Text + toolinput.UIContextInstruction(ctx),
-	})
+	}
+	output, err := c.runner.Invoke(ctx, input)
 	if err != nil {
 		c.logger.Errorf("Agent 调用失败, session_id=%s, err=%v", id, err)
 		return "", fmt.Errorf("Agent 调用失败: %w", err)
 	}
 
 	// Reflection 在答案写入长期会话前执行，避免未核验的完成声明成为后续记忆。
-	answer := reflectModeTurn(ctx, output.Content, trace.Snapshot())
-	if err = c.memory.AppendTurn(ctx, id, question, answer); err != nil {
+	if output == nil || strings.TrimSpace(output.Content) == "" {
+		return "", errors.New("Agent 返回空回答")
+	}
+	answer, err := c.verifyAndRepairAnswer(ctx, output.Content, trace, input)
+	if err != nil {
+		return "", err
+	}
+	// 页面说明只属于本轮模型上下文，不能当作用户原话进入标题、偏好与长期摘要。
+	// 旧客户端没有 user_query 时仍保存完整 question，不猜测或截断用户的多行输入。
+	if err = c.memory.AppendTurn(ctx, id, toolinput.IntentText(ctx, question), answer); err != nil {
 		return "", err
 	}
 	return answer, nil
@@ -123,26 +132,27 @@ func (c *chatServer) ChatSream(ctx context.Context, question string, id string, 
 	trace := &toolinput.Trace{}
 	ctx = toolinput.WithTrace(ctx, trace)
 	toolinput.StreamPhase(ctx, "model")
-	output, err := c.runner.Stream(ctx, &chat.UserMessage{
+	input := &chat.UserMessage{
 		ID:           id,
 		Query:        question,
 		History:      history,
 		Memory:       formatLongTermMemory(session, longTerm) + taskMemory,
 		ResponseMode: normalizeResponseMode(responseMode),
 		WorkflowPlan: plan.Text + toolinput.UIContextInstruction(ctx),
-	})
+	}
+	output, err := c.runner.Stream(ctx, input)
 	if err != nil {
 		c.logger.Errorf("Agent 流式调用失败, session_id=%s, err=%v", id, err)
 		return fmt.Errorf("Agent 流式调用失败: %w", err)
 	}
 
 	defer output.Close()
-	return c.forwardStream(ctx, output, trace, plan.RequiresVerification, id, question, msgChan)
+	return c.forwardStream(ctx, output, trace, plan.RequiresVerification, id, question, msgChan, input)
 }
 
 // 实时展示草稿，结束后再核验。核验改写通过 replace 原子替换，避免重复答案；
 // 未支持事件协议的旧调用方保留原先先核验后输出的行为。
-func (c *chatServer) forwardStream(ctx context.Context, output *schema.StreamReader[*schema.Message], trace *toolinput.Trace, verify bool, id, question string, msgChan *chan string) error {
+func (c *chatServer) forwardStream(ctx context.Context, output *schema.StreamReader[*schema.Message], trace *toolinput.Trace, verify bool, id, question string, msgChan *chan string, input *chat.UserMessage) error {
 	var response strings.Builder
 	for {
 		select {
@@ -153,8 +163,14 @@ func (c *chatServer) forwardStream(ctx context.Context, output *schema.StreamRea
 
 		message, receiveErr := output.Recv()
 		if errors.Is(receiveErr, io.EOF) {
+			if strings.TrimSpace(response.String()) == "" {
+				return errors.New("Agent 返回空回答")
+			}
 			toolinput.StreamPhase(ctx, "verification")
-			verified := reflectModeTurn(ctx, response.String(), trace.Snapshot())
+			verified, err := c.verifyAndRepairAnswer(ctx, response.String(), trace, input)
+			if err != nil {
+				return err
+			}
 			if toolinput.HasStreamEvents(ctx) {
 				if verified != response.String() {
 					toolinput.EmitStream(ctx, "replace", verified)
@@ -173,7 +189,7 @@ func (c *chatServer) forwardStream(ctx context.Context, output *schema.StreamRea
 					return nil
 				}
 			}
-			return c.memory.AppendTurn(ctx, id, question, verified)
+			return c.memory.AppendTurn(ctx, id, toolinput.IntentText(ctx, question), verified)
 		}
 		if receiveErr != nil {
 			c.logger.Errorf("接收 Agent 流失败, session_id=%s, err=%v", id, receiveErr)

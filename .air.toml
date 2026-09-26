@@ -1,0 +1,41 @@
+# 开发专用：监控 Go 源码并重新编译 ./cmd，输出不进入 Git。
+# Electron 源文件和 Python 文件有各自的加载方式，不触发 Go 重启。
+root = "."
+tmp_dir = ".cache/air"
+env_files = []
+
+[build]
+cmd = "go build -o ./.cache/air/neuroflow ./cmd"
+entrypoint = ["./.cache/air/neuroflow"]
+include_dir = ["cmd", "internal", "pkg", "config"]
+include_ext = ["go", "mod", "sum", "json"]
+include_file = ["go.mod", "go.sum", "config/config.json"]
+exclude_dir = [".git", ".cache", ".tools", ".runtime", ".tmp-go-cache", ".venv", "vendor", "desktop", "docs", "scripts", "data", "datasets", "outputs", "uploads", "log", "prometheusTestServer"]
+exclude_regex = ["_test\\.go$"]
+exclude_unchanged = true
+follow_symlink = false
+# 合并编辑器一次保存产生的多个事件，避免重复编译。
+delay = 800
+stop_on_error = true
+send_interrupt = false
+kill_delay = "500ms"
+rerun = false
+log = "build-errors.log"
+
+[build.windows]
+cmd = "go build -o ./.cache/air/neuroflow.exe ./cmd"
+entrypoint = [".\\.cache\\air\\neuroflow.exe"]
+
+[log]
+time = true
+
+[screen]
+clear_on_rebuild = false
+keep_scroll = true
+
+[misc]
+# 保留日志便于排查；退出时不递归删除本机目录。
+clean_on_exit = false
+
+[proxy]
+enabled = false

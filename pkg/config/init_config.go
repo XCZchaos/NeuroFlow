@@ -94,8 +94,10 @@ func InitConfig(configFile string) (*Config, error) {
 		"openai.provider": "NEUROFLOW_LLM_PROVIDER", "openai.temperature": "NEUROFLOW_LLM_TEMPERATURE",
 		"openai.capabilities_detected": "NEUROFLOW_LLM_CAPABILITIES_DETECTED", "openai.supports_temperature": "NEUROFLOW_LLM_SUPPORTS_TEMPERATURE",
 	} {
-		if value := strings.TrimSpace(os.Getenv(environment)); value != "" {
-			v.Set(key, value)
+		if value, exists := os.LookupEnv(environment); exists && (strings.TrimSpace(value) != "" || key == "openai.api_key") {
+			// An explicitly empty packaged key disables the model; it must not
+			// silently restore a key from the configuration template.
+			v.Set(key, strings.TrimSpace(value))
 		}
 	}
 

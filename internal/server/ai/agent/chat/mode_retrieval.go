@@ -43,6 +43,10 @@ func lightweightQuestion(query string, explainComponent bool) bool {
 
 func modeRetrieval(reader knowledgeRetriever) func(context.Context, *UserMessage, ...compose.LambdaOpt) (map[string]any, error) {
 	return func(ctx context.Context, input *UserMessage, _ ...compose.LambdaOpt) (map[string]any, error) {
+		// 核验修正沿用本轮工具证据，不重复整套自动检索。模型可针对缺失引用补查。
+		if toolinput.IsAnswerRepair(ctx) {
+			return map[string]any{"documents": []*schema.Document{}, "evidence_status": "本轮为回答修正；已有工具事实在修正反馈中，仅在缺少出处时定向调用 query_internal_docs。"}, nil
+		}
 		policy := toolinput.Policy(input.ResponseMode)
 		query := toolinput.IntentText(ctx, input.Query)
 		ui := toolinput.CurrentUIContext(ctx)

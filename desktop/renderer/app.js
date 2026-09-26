@@ -77,11 +77,6 @@ globalThis.NeuroFlowWorkspace = Object.freeze({
 	// preserves the same message renderer, history, response mode, cancellation,
 	// SSE handling and ReAct tool execution used by the preprocessing workspace.
 	sendAgentMessage:async (question,options)=>sendMessage(question,options),
-	latestSleepStages:async()=>{
-		if(!state.current?.datasetId)return null;
-		const response=await fetch(`${state.url}/datasets/${encodeURIComponent(state.current.datasetId)}/sleep/stages/latest`,{signal:AbortSignal.timeout(30000)});
-		if(response.status===404)return null;const data=await response.json();if(!response.ok)throw Error(data.message||`HTTP ${response.status}`);return data;
-	},
 	configureAgent:({context,placeholder,suggestions}={})=>{
 		if(context)$('#context-mode').textContent=context;
 		if(placeholder)$('#chat-input').placeholder=placeholder;
@@ -244,7 +239,8 @@ function renderQuality(){
   const card=$('#quality-card'),comparison=state.analysis?.result?.quality_comparison;card.hidden=!comparison;if(!comparison)return;
   const canvas=$('#quality-canvas'),width=canvas.clientWidth||600,height=150,ratio=devicePixelRatio||1;canvas.width=width*ratio;canvas.height=height*ratio;
   const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);ctx.clearRect(0,0,width,height);ctx.font='11px Segoe UI';
-  [['处理前',comparison.before.score,'#aebbb5'],['处理后',comparison.after.score,'#16846d']].forEach(([label,value,color],index)=>{const y=28+index*55;ctx.fillStyle='#718078';ctx.fillText(`${label} ${Number(value).toFixed(1)}`,0,y);ctx.fillStyle='#edf1ef';ctx.fillRect(90,y-14,width-110,18);ctx.fillStyle=color;ctx.fillRect(90,y-14,(width-110)*Math.max(0,Math.min(100,Number(value)))/100,18);});
+  const colors=window.NeuroTheme.palette();
+  [[i18n.getLocale()==='en'?'Before':'处理前',comparison.before.score,colors.muted],[i18n.getLocale()==='en'?'After':'处理后',comparison.after.score,colors.accent]].forEach(([label,value,color],index)=>{const y=28+index*55;ctx.fillStyle=colors.text;ctx.fillText(`${label} ${Number(value).toFixed(1)}`,0,y);ctx.fillStyle=colors.grid;ctx.fillRect(90,y-14,width-110,18);ctx.fillStyle=color;ctx.fillRect(90,y-14,(width-110)*Math.max(0,Math.min(100,Number(value)))/100,18);});
   const list=$('#audit-steps');list.replaceChildren();(state.analysis.result.audit_log||[]).forEach(item=>{const row=element('div',`audit-step ${item.status}`);row.append(element('strong','',item.step),element('span','',item.detail||item.status));list.append(row);});
   $('#open-audit').disabled=!state.analysis?.output?.audit_relative_path;
 }
@@ -276,23 +272,28 @@ function setResponseMode(mode){
 function movePipelineStep(from,to){if(to<0||to>=state.steps.length||state.running)return;const [step]=state.steps.splice(from,1);state.steps.splice(to,0,step);renderPipeline();}
 function renderAlgorithmLibrary(){const list=$('#algorithm-list');list.replaceChildren();const catalog=algorithmCatalog[state.mode]||[];if(!catalog.length){list.append(element('p','empty',i18n.getLocale()==='en'?'This modality currently uses its template; more executable steps are being integrated.':'当前模态暂时使用模板，更多可执行步骤仍在接入。'));return;}catalog.forEach(item=>{const exists=state.steps.some(step=>step.key===item.key),row=element('div','algorithm-option'),details=element('div');details.append(element('strong','',i18n.getLocale()==='en'?item.english:item.name),element('small','',item.executable?t('pipeline.available'):(i18n.getLocale()==='en'?'Planned · not executable':'规划中 · 尚不可执行')));const button=element('button','button light',exists?t('pipeline.added'):t('pipeline.add'));button.type='button';button.disabled=exists||!item.executable;button.addEventListener('click',()=>{state.steps.push({...clone(item),enabled:true});renderPipeline();renderAlgorithmLibrary();});row.append(details,button);list.append(row);});}
 function formatBytes(bytes) { return bytes<1048576?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1048576).toFixed(1)} MB`; }
-async function registerPath(path) {
+function requestSignal(signal,timeout){return signal?AbortSignal.any([signal,AbortSignal.timeout(timeout)]):AbortSignal.timeout(timeout);}
+async function registerPath(path,signal) {
   // 把本地路径交给本机 Go 服务。响应中只保留 dataset_id 和解析后的元数据。
-  const response=await fetch(`${state.url}/datasets/register`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path}),signal:AbortSignal.timeout(35000)});
+  signal?.throwIfAborted();
+  const response=await fetch(`${state.url}/datasets/register`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path}),signal:requestSignal(signal,35000)});
   const data=await response.json().catch(()=>({message:`HTTP ${response.status}`}));
   if(!response.ok)throw new Error(data.message||data.code||`HTTP ${response.status}`);
   return data;
 }
-async function ensureDatasetRegistration(item) {
+async function ensureDatasetRegistration(item,signal) {
+  signal?.throwIfAborted();
   if(!item?.path)return item;
-  // 后端注册表当前保存在内存中，Go 进程重启后旧 dataset_id 会失效。发送消息前
-  // 先做一次轻量检查；仅在 404 时用用户原先选择的本地路径重新注册。
+  // 注册表已持久化，但文件移动或旧记录失效后仍需重新确认。
+  // 只有明确的 404 才重新注册；网络故障和用户取消不能被吞掉后继续发起请求。
   if(item.datasetId){
-    const check=await fetch(`${state.url}/datasets/${encodeURIComponent(item.datasetId)}`,{signal:AbortSignal.timeout(5000)}).catch(()=>null);
+    const check=await fetch(`${state.url}/datasets/${encodeURIComponent(item.datasetId)}`,{signal:requestSignal(signal,5000)});
+    signal?.throwIfAborted();
     if(check?.ok)return item;
     if(check&&check.status!==404)throw new Error(`HTTP ${check.status}`);
   }
-  const record=await registerPath(item.path);
+  const record=await registerPath(item.path,signal);
+  signal?.throwIfAborted();
   item.datasetId=record.dataset_id;item.inspection=record.inspection;item.analysis=null;
   if(state.current===item){state.analysis=null;state.processed=false;}
   return item;
@@ -306,7 +307,7 @@ async function loadRawPreview(datasetId) {
 }
 async function importPaths(paths) {
   // 多选文件逐个注册：一种格式失败不会阻止其他文件继续导入。
-  if(state.running)return toast(t('toast.waitImport'));
+  if(state.running||state.sending)return toast(t('toast.waitImport'));
   if(state.backend!=='backend')return toast(t('toast.connectBackend'));
   let accepted=0; const failures=[],previewFailures=[];
   for(const path of paths) {
@@ -330,7 +331,7 @@ async function importPaths(paths) {
   toast(accepted?`${t('toast.imported',{count:accepted})}${previewFailures.length?t('toast.previewFailed',{count:previewFailures.length}):''}${failures.length?t('toast.failedCount',{count:failures.length}):''}`:t('toast.readFailed',{error:failures[0]||(i18n.getLocale()==='en'?'Unknown error':'未知错误')}));
 }
 function importFiles(files) {
-  if(state.running) return toast(t('toast.demoImport'));
+  if(state.running||state.sending) return toast(t('toast.waitImport'));
   const allowed=templates[state.mode].accept.split(',');let accepted=0,rejected=0;
   for(const file of files) {
     if(!allowed.some(ext=>file.name.toLowerCase().endsWith(ext))) {rejected++;continue;}
@@ -481,19 +482,28 @@ function updateAssistantMessage(message,text) {
   $('#messages').scrollTop=$('#messages').scrollHeight;
 }
 
-// 只有用户明确要求执行信号处理时才显示操作进度，普通知识问答仍使用简洁的思考状态。
-// 这些状态表示当前请求所处阶段；最终是否真正执行，以后端生成的新 analysis_id 为准。
-function isAgentOperationRequest(text){return /预处理|滤波|陷波|重参考|坏道|插值|去伪迹|伪迹|覆盖.{0,10}(标签|标注)|睡眠.{0,8}(分期|标注|打标)|自动.{0,6}(分期|标注|打标)|\bICA\b|保存.{0,8}(文件|结果)|运行.{0,6}(流程|处理)|执行.{0,8}(分析|处理)|preprocess|filter|notch|bad channel|artifact|sleep.{0,8}(stag|scor|label)|automatic.{0,8}(stag|scor|label)|save.{0,12}(file|result)|run.{0,8}(pipeline|analysis)/i.test(text);}
 // Explicit sleep-staging requests are actions, not open-ended questions. The
 // outer workflow executes the validated local tool first, then lets the same
 // Agent explain the real result. This prevents a ReAct turn from stopping after
 // saying "I will call the tool" without actually doing so.
-function isSleepStagingRequest(text){return /睡眠.{0,14}(自动分期|分期工具|自动标注|自动打标|候选标签|覆盖|重打|重新标注)|(?:自动|覆盖|重打|重新).{0,10}(睡眠分期|睡眠标注|睡眠标签|现有标签)|(?:sleep).{0,16}(stag|scor|label|overwrite|replace)/i.test(text);}
+// 此处只决定是否走“先执行再解释”的快捷路径，模糊请求交给 Agent 正常理解。
+// 只读解释和否定/原理问题不能因为包含“自动标注”几个字就触发真实算法。
+function isSleepStagingRequest(text,readOnly=false){
+  if(readOnly)return false;
+  if(/不要|不用|无需|不需要|别|暂不|取消|停止|先不|do\s+not|don't|don’t|\b(no|not|never|stop|cancel|without)\b/i.test(text))return false;
+  // “Generate candidates and tell me what needs review” 是执行后解释，
+  // 不能只因后半句含 what 就把英文自动标注按钮误判成纯问答。
+  if(/如何|怎么|为什么|原理|区别|是否支持|能否支持|^(?:请|帮我)?(?:解释|介绍|说明)|\b(how|why|explain|describe)\b|^(?:(?:please|can you|could you)\s+)?(?:what|tell me|show me)\b/i.test(text))return false;
+  const target=/睡眠|分期|自动标注|自动打标|候选标签|现有标签|已有标签|\b(sleep|staging|scoring|labels?|candidates?)\b/i.test(text);
+  const action=/调用|运行|执行|生成|开始|帮我|替我|自动标注|自动打标|进行分期|重新|重打|覆盖|请.*分期|\b(run|call|generate|start|perform|score|stage|overwrite|replace)\b/i.test(text);
+  return target&&action;
+}
 function requestsLabelOverwrite(text){return /覆盖.{0,12}(标签|标注|分期)|(现有|已有).{0,8}(标签|标注|分期).{0,12}覆盖|重新.{0,8}(标注|打标|分期)|重打.{0,6}(标签|标注)|overwrite|replace.{0,8}(label|scor|stag)/i.test(text);}
 
 async function executeSleepStagingWorkflow(datasetId,overwriteExisting=false,signal){
   const response=await fetch(`${state.url}/datasets/${encodeURIComponent(datasetId)}/sleep/stage`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(600000)]):AbortSignal.timeout(600000)});
   const result=await response.json();if(!response.ok)throw Error(result.message||`HTTP ${response.status}`);
+  signal?.throwIfAborted();
   // The sleep page owns label provenance and review state. A DOM event keeps
   // that specialist rendering out of the shared Agent implementation.
   document.dispatchEvent(new CustomEvent('neuroflow:sleepstages',{detail:{result,overwriteExisting}}));
@@ -527,31 +537,39 @@ function demoReply(question) {
 }
 async function sendMessage(text,options={}) {
   if(state.sending||!text.trim())return;
+  if(state.running||state.importStatus?.status==='running')return toast(t('toast.wait'));
   if(window.NeuroPPG?.isBusy?.())return toast(t('toast.wait'));
-  const page=state.view||'eeg',chatDataset=['help','sessions','ppg'].includes(page)?null:state.current,previousAnalysisId=chatDataset?.analysis?.analysis_id||null;
+  const page=state.view||'eeg',responseMode=state.responseMode,chatDataset=['help','sessions','ppg'].includes(page)?null:state.current,previousAnalysisId=chatDataset?.analysis?.analysis_id||null;
   const pageContext=window.NeuroPages.context(page,chatDataset);
   let componentContext=window.NeuroComponents?.snapshot(page,chatDataset?.datasetId);
   if(componentContext)componentContext.explain_only=options.explainComponent===true;
   if(page==='history')pageContext.recent_runs=state.history.slice(-4).map(run=>({modality:run.mode,time:run.time,executed:run.real===true,steps:run.steps?.map(step=>step.key||step.name)}));
   if(page==='datasets')pageContext.datasets=state.datasets.map(file=>({dataset_id:file.datasetId,modality:file.mode,parsed:Boolean(file.inspection),selected:file===chatDataset}));
   let ppgID='';
-  text=text.trim();const overwriteSleepLabels=requestsLabelOverwrite(text),sleepViewActive=$('.nav-item[data-view="sleep"]')?.classList.contains('active'),sleepOperation=isSleepStagingRequest(text)||(sleepViewActive&&overwriteSleepLabels),expectedOperation=isAgentOperationRequest(text);state.sending=true;$('#chat-input').value='';appendMessage('user',text);
+  text=text.trim();const overwriteSleepLabels=requestsLabelOverwrite(text),sleepOperation=page==='sleep'&&isSleepStagingRequest(text,options.explainComponent===true);state.sending=true;$('#chat-input').value='';appendMessage('user',text);
   $('#send-message').textContent='■';$('#send-message').title=t('action.stop');$('#send-message').setAttribute('aria-label',t('action.stop'));
-  const pending=appendThinkingMessage(),execution=window.NeuroAgentStream.attach(pending);let answer='',requestTimeout,renderFrame=0;state.streamController=new AbortController();
+  const pending=appendThinkingMessage(),execution=window.NeuroAgentStream.attach(pending),controller=new AbortController(),turnSnapshot=configSnapshot();let answer='',requestTimeout,renderFrame=0;state.streamController=controller;
   if(page==='ppg')window.NeuroPPG.setAgentBusy(true);
-  const resetIdleTimeout=()=>{clearTimeout(requestTimeout);requestTimeout=setTimeout(()=>state.streamController?.abort('timeout'),120000);};
+  const resetIdleTimeout=()=>{clearTimeout(requestTimeout);requestTimeout=setTimeout(()=>controller.abort('timeout'),120000);};
   try {
     if(state.backend==='demo') {
-      await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,450);state.streamController.signal.addEventListener('abort',()=>{clearTimeout(timer);reject(new DOMException('已停止','AbortError'));},{once:true});});
-      answer=demoReply(text);updateAssistantMessage(pending,answer);execution.finish('completed');
+      await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,450);controller.signal.addEventListener('abort',()=>{clearTimeout(timer);reject(new DOMException('已停止','AbortError'));},{once:true});});
+      answer=demoReply(text);updateAssistantMessage(pending,answer);
     }
     else {
       execution.phase('prepare');
-      await ensureDatasetRegistration(chatDataset);
+      // Reapply encrypted desktop settings after a Go restart before starting
+      // any operation. Do not silently send the conversation to an old model.
+      const modelSync=await window.desktop?.syncModelConfig?.(state.url);
+      controller.signal.throwIfAborted();
+      if(modelSync && !modelSync.applied && modelSync.error!=='NO_SAVED_MODEL')throw Error(i18n.getLocale()==='en'?'Saved model settings are not applied. Open connection settings and verify the backend.':'已保存的模型配置尚未应用。请打开连接设置，核对后端生效状态。');
+      if(modelSync?.applied && !modelSync.active?.enabled)throw Error(i18n.getLocale()==='en'?'Model disabled: enter an API key in connection settings.':'模型已停用：请在连接设置中填写 API Key。');
+      await ensureDatasetRegistration(chatDataset,controller.signal);
+      controller.signal.throwIfAborted();
       pageContext.dataset_id=chatDataset?.datasetId||null;
       if(componentContext&&componentContext.dataset_id!==(chatDataset?.datasetId||'')){componentContext=window.NeuroComponents?.snapshot(page,chatDataset?.datasetId);componentContext.explain_only=options.explainComponent===true;}
 	  if(page==='ppg'){
-        try{ppgID=await window.NeuroPPG.prepareAgent(state.streamController.signal);}
+        try{ppgID=await window.NeuroPPG.prepareAgent(controller.signal);}
         catch(error){
           if(error.name==='AbortError')throw error;
           // Invalid PPG structure should still allow a conversation explaining
@@ -563,7 +581,7 @@ async function sendMessage(text,options={}) {
 	  if(sleepOperation && page==='sleep'){
 		if(!state.current?.datasetId)throw Error(i18n.getLocale()==='en'?'Import and confirm a sleep EEG recording first.':'请先导入并确认睡眠 EEG 数据。');
 		execution.event({kind:'tool',id:'local-sleep',tool:'suggest_sleep_stages',state:'running'});
-		const staged=await executeSleepStagingWorkflow(state.current.datasetId,overwriteSleepLabels,state.streamController.signal);
+		const staged=await executeSleepStagingWorkflow(chatDataset.datasetId,overwriteSleepLabels,controller.signal);
 		execution.event({kind:'tool',id:'local-sleep',tool:'suggest_sleep_stages',state:'completed'});
 		workflowEvidence=i18n.getLocale()==='en'
 		  ? `\n[The outer workflow has already executed the local sleep-staging tool successfully. Do not call it again and do not describe a future plan. Report this real result naturally: analysis_id=${staged.analysis_id}; epoch_seconds=${staged.epoch_seconds}; counts=${JSON.stringify(staged.counts)}; channels=${JSON.stringify(staged.channel_support)}; capabilities=${JSON.stringify(staged.capabilities)}; detected_events=${JSON.stringify(staged.event_counts)}; existing_labels_overwritten=${overwriteSleepLabels}; review_required=true.]`
@@ -573,7 +591,7 @@ async function sendMessage(text,options={}) {
       // 明确标注证据边界：元数据可以回答通道数和采样率，但不能证明数据质量良好。
       const evidence=meta?`已由 ${meta.reader} 读取：格式=${meta.format}，模态=${meta.modality}，通道数=${meta.channel_count}，采样率=${meta.sampling_rate_hz} Hz，时长=${meta.duration_seconds.toFixed(3)} 秒，样本数=${meta.sample_count}，通道类型=${JSON.stringify(meta.channel_type_counts)}，标注数=${meta.annotation_count}，已标记坏道=${JSON.stringify(meta.bad_channels)}。dataset_id=${chatDataset.datasetId}。这些是文件元数据，尚未执行信号质量分析或预处理。`:`Active page=${page}; no MNE dataset bound to this turn. For PPG use run_ppg_analysis with the prepared page configuration.`;
       resetIdleTimeout();
-      const response=await fetch(`${state.url}/chatStream`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({user_query:text,question:`[Active page context: ${JSON.stringify(pageContext)}]\n[界面语言：${i18n.getLocale()==='en'?'English':'简体中文'}；请使用相同语言回答。]\n[数据上下文：${evidence}]${workflowEvidence}\n${text}`,id:state.session,dataset_id:chatDataset?.datasetId||'',workspace:page,ppg_id:ppgID,ui_context:componentContext,response_mode:state.responseMode}),signal:state.streamController.signal});
+      const response=await fetch(`${state.url}/chatStream`,{method:'POST',headers:{'Content-Type':'application/json','Accept':'text/event-stream'},body:JSON.stringify({user_query:text,question:`[Active page context: ${JSON.stringify(pageContext)}]\n[界面语言：${i18n.getLocale()==='en'?'English':'简体中文'}；请使用相同语言回答。]\n[数据上下文：${evidence}]${workflowEvidence}\n${text}`,id:state.session,dataset_id:chatDataset?.datasetId||'',workspace:page,ppg_id:ppgID,ui_context:componentContext,response_mode:responseMode}),signal:controller.signal});
       if(!response.ok)throw new Error(t('error.backendHttp',{status:response.status}));
       let streamError='',streamErrorCode='',receivedDone=false;
       await consumeSSE(response,(event,data)=>{
@@ -586,7 +604,7 @@ async function sendMessage(text,options={}) {
           // 将高频 token 合并到一帧渲染，减少 Markdown 重排造成的闪烁。
           if(!renderFrame)renderFrame=requestAnimationFrame(()=>{renderFrame=0;updateAssistantMessage(pending,answer);});
         } else if(event==='error') {
-          try{const failure=JSON.parse(data);streamErrorCode=failure.code;streamError=failure.code==='AGENT_STEP_LIMIT'?(i18n.getLocale()==='en'?'Agent interaction budget reached. Completed actions are not undone. Review tool records before continuing; consider Deep analysis for complex tasks.':failure.message):failure.message||t('error.stream');}catch{streamError=data||t('error.stream');}
+          try{const failure=JSON.parse(data);streamErrorCode=failure.code;streamError=window.NeuroAgentStream.failureMessage(failure,responseMode);}catch{streamError=data||t('error.stream');}
         }
       });
       clearTimeout(requestTimeout);
@@ -594,28 +612,34 @@ async function sendMessage(text,options={}) {
       if(streamError){const error=new Error(streamError);error.code=streamErrorCode;throw error;}
       if(!receivedDone)throw new Error(i18n.getLocale()==='en'?'Response interrupted before completion.':'连接在回答完成前中断。');
       if(!answer.trim())throw new Error(t('error.empty'));
-      updateAssistantMessage(pending,answer);execution.finish('completed');
+      updateAssistantMessage(pending,answer);
     }
   }catch(error){
     if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0;}
-    const cancelled=state.streamController?.signal.aborted&&state.streamController.signal.reason!=='timeout';
+    const cancelled=controller.signal.aborted&&controller.signal.reason!=='timeout';
     execution.finish(cancelled?'cancelled':'failed');
     if(cancelled)updateAssistantMessage(pending,(answer?answer+'\n\n':'')+`*${t('agent.stopped')}*`);
-    else if(error.code==='AGENT_STEP_LIMIT')updateAssistantMessage(pending,(answer?answer+'\n\n':'')+error.message);
-    else updateAssistantMessage(pending,(answer?answer+'\n\n':'')+t('error.connection',{message:state.streamController?.signal.reason==='timeout'?(i18n.getLocale()==='en'?'No stream activity for 120 seconds':'120 秒未收到流式响应'):error.message}));
+    else if(error.code)updateAssistantMessage(pending,(answer?answer+'\n\n':'')+error.message);
+    else updateAssistantMessage(pending,(answer?answer+'\n\n':'')+t('error.connection',{message:controller.signal.reason==='timeout'?(i18n.getLocale()==='en'?'No stream activity for 120 seconds':'120 秒未收到流式响应'):error.message}));
   }
   finally{
     clearTimeout(requestTimeout);if(renderFrame)cancelAnimationFrame(renderFrame);
-    if(page==='ppg'){try{await window.NeuroPPG.syncAgentResult(ppgID);}catch(error){toast(error.message);}window.NeuroPPG.setAgentBusy(false);}
-    state.sending=false;state.streamController=null;$('#send-message').textContent='↑';$('#send-message').title=t('action.send');$('#send-message').setAttribute('aria-label',t('action.send'));
-    // Agent 工具在服务端执行，SSE 正文不会携带大体积波形；回答结束后用
-    // dataset_id 查询一次最新结果，只有 analysis_id 变化才刷新画布。
-    let operationResult=null;
-    if(state.backend==='backend'&&chatDataset?.datasetId)operationResult=await syncLatestAgentAnalysis(chatDataset,previousAnalysisId);
-	// 成功产生分析结果时展示独立结果卡。失败原因已经由 Agent 或连接错误正文说明，
-	// 不再追加第二张“未检测到结果”卡，避免用户看到两个含义不清的错误提示。
-	if(operationResult)appendAgentOutcome(pending,operationResult,true);
-	if(state.backend==='backend')loadSessions().catch(()=>{});
+    // 结果同步属于当前请求。同步完成前保持页面/会话锁，避免上一轮结果
+    // 覆盖新页面，或用刚修改的参数给旧结果生成错误的历史记录。取消后不再补发请求。
+    try{
+      if(!controller.signal.aborted&&state.backend==='backend'){
+        if(page==='ppg'||chatDataset?.datasetId)execution.phase('sync');
+        if(page==='ppg')await window.NeuroPPG.syncAgentResult(ppgID,controller.signal);
+        if(chatDataset?.datasetId){const result=await syncLatestAgentAnalysis(chatDataset,previousAnalysisId,controller.signal,turnSnapshot);if(result)appendAgentOutcome(pending,result,true);}
+        if(!controller.signal.aborted)loadSessions().catch(()=>{});
+      }
+    }catch(error){if(!controller.signal.aborted){execution.finish('sync_failed');toast(i18n.getLocale()==='en'?`Result refresh failed: ${error.message}`:`结果刷新失败：${error.message}`);}}
+    finally{
+      execution.finish(controller.signal.aborted?'cancelled':'completed');
+      if(page==='ppg')window.NeuroPPG.setAgentBusy(false);
+      state.sending=false;if(state.streamController===controller)state.streamController=null;
+      $('#send-message').textContent='↑';$('#send-message').title=t('action.send');$('#send-message').setAttribute('aria-label',t('action.send'));
+    }
   }
 }
 function download(data,name) { const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const anchor=element('a');anchor.href=url;anchor.download=name;document.body.append(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1000); }
@@ -693,18 +717,21 @@ function agentComponentState(id,detail={}){
     default:return {};
   }
 }
-async function syncLatestAgentAnalysis(dataset,previousAnalysisId){
+async function syncLatestAgentAnalysis(dataset,previousAnalysisId,signal,snapshot){
   try{
-    const response=await fetch(`${state.url}/datasets/${encodeURIComponent(dataset.datasetId)}/analysis/latest`,{signal:AbortSignal.timeout(10000)});
+    signal?.throwIfAborted();
+    const response=await fetch(`${state.url}/datasets/${encodeURIComponent(dataset.datasetId)}/analysis/latest`,{signal:requestSignal(signal,10000)});
     if(response.status===404)return null;
-    const result=await response.json();if(!response.ok||!result.analysis_id||result.analysis_id===previousAnalysisId)return null;
+    const result=await response.json();if(!response.ok)throw Error(result.message||`HTTP ${response.status}`);
+    if(!result.analysis_id||result.analysis_id===previousAnalysisId)return null;
+    signal?.throwIfAborted();
     dataset.analysis=result;
     if(state.current!==dataset)return result;
     state.analysis=result;state.processed=true;state.selectedChannel=null;state.singleChannel=false;state.signalWindow={start:0,duration:10,preview:null,loading:false};
     $$('[data-signal]').forEach(item=>item.classList.toggle('selected',item.dataset.signal==='processed'));
-    const snapshot=configSnapshot();state.history.push({...snapshot,real:true,agentTriggered:true,result:result.result,selection:result.selection,output:result.output,steps:snapshot.steps.filter(step=>step.enabled),time:new Date().toLocaleString(i18n.getLocale()==='en'?'en-US':'zh-CN')});
+    const original=snapshot||configSnapshot();state.history.push({...original,datasetId:dataset.datasetId,real:true,agentTriggered:true,result:result.result,selection:result.selection,output:result.output,steps:original.steps.filter(step=>step.enabled),time:new Date().toLocaleString(i18n.getLocale()==='en'?'en-US':'zh-CN')});
     renderDataset();drawSignal();renderLists();toast(t('agent.waveformUpdated'));return result;
-  }catch(error){console.warn('Unable to synchronize Agent waveform',error);return null;}
+  }catch(error){if(signal?.aborted)return null;throw error;}
 }
 function numericPipelineParameter(stepName,paramName,fallback){const step=state.steps.find(item=>item.name===stepName&&item.enabled);const value=step?.params.find(item=>item[0]===paramName)?.[1];const number=Number.parseFloat(value);return Number.isFinite(number)?number:fallback;}
 // 区间参数允许用户输入“-0.2, 0”或“-0.2，0”。解析失败时使用经过验证的默认值，
@@ -740,7 +767,7 @@ async function runDemo(){
   state.history.push({...snapshot,steps:snapshot.steps.filter(s=>s.enabled),time:new Date().toLocaleString(i18n.getLocale()==='en'?'en-US':'zh-CN')});state.running=false;renderPipeline();$('#run-title').textContent=t('run.completed');$('#run-subtitle').textContent=t('run.recorded');$('#run-progress').textContent=t('run.simulated');$('#run-button').textContent=t('run.again');renderLists();toast(t('run.finishedToast'));
 }
 async function runPipeline(){
-  if(state.running)return;
+  if(state.running||state.sending)return toast(t('toast.wait'));
   const enabled=state.steps.filter(step=>step.enabled);if(!enabled.length)return;
   if(state.backend!=='backend'||!state.current?.datasetId)return runDemo();
   const willSave=$('#save-output').checked;state.running=true;$('#save-output').disabled=true;renderPipeline();$('#run-button').textContent=t('run.processing');$('#run-title').textContent=t('run.processingData');$('#run-subtitle').textContent=t(willSave?'run.processingHint':'run.processingMemoryHint');$('#run-progress').textContent=t('run.wait');
@@ -753,13 +780,14 @@ async function runPipeline(){
   finally{state.running=false;$('#save-output').disabled=false;renderPipeline();$('#run-button').textContent=t('run.runAgain');}
 }
 function drawSignal(){
+  const colors=window.NeuroTheme.palette();
   const canvas=$('#signal-canvas');const preview=activeSignalPreview();const series=preview?.data;const labels=preview?.channel_names||templates[state.mode].labels;const channelCount=Math.max(1,Math.min(8,series?.length||labels.length));const width=canvas.clientWidth,height=canvas.clientHeight;if(!width)return;const ratio=window.devicePixelRatio||1;canvas.width=width*ratio;canvas.height=height*ratio;const ctx=canvas.getContext('2d');ctx.scale(ratio,ratio);const left=state.mode==='MEG'?62:45,right=14,top=9,bottom=22,plotWidth=width-left-right,rowHeight=(height-top-bottom)/channelCount;
-  ctx.fillStyle='#ffffff';ctx.fillRect(0,0,width,height);ctx.font='8px Segoe UI';ctx.lineWidth=.6;
+  ctx.fillStyle=colors.background;ctx.fillRect(0,0,width,height);ctx.font='9px Consolas';ctx.lineWidth=.6;
   const duration=series?.[0]?.length&&preview.sample_rate_hz?series[0].length/preview.sample_rate_hz:10,startTime=Number(preview?.start_seconds)||0;
-  for(let tick=0;tick<=10;tick++){const x=left+plotWidth*tick/10;ctx.strokeStyle='#edf1ee';ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.fillStyle='#a7b0aa';ctx.fillText((startTime+duration*tick/10).toFixed(duration<.1?4:duration<1?3:duration<10?1:0),x-2,height-5);}
-  labels.slice(0,channelCount).forEach((label,index)=>{const y=top+rowHeight*(index+.5);ctx.fillStyle='#9aa79f';ctx.fillText(label,1,y+3);ctx.strokeStyle='#f2f5f3';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();const selected=Boolean(preview)&&label===state.selectedChannel;ctx.strokeStyle=selected?'#0b6657':state.processed?'#52a18d':'#8bb0a5';ctx.lineWidth=selected?1.8:.72;ctx.globalAlpha=preview&&!selected?.48:1;ctx.beginPath();if(series?.[index]?.length){const values=series[index];const center=values.reduce((sum,value)=>sum+value,0)/values.length;const peak=Math.max(...values.map(value=>Math.abs(value-center)),Number.EPSILON);values.forEach((value,sample)=>{const x=left+plotWidth*sample/Math.max(1,values.length-1),point=y-(value-center)/peak*rowHeight*.36;if(sample===0)ctx.moveTo(x,point);else ctx.lineTo(x,point);});}else{for(let pixel=0;pixel<=plotWidth;pixel++){const time=pixel/plotWidth*10;let amplitude=state.mode==='fNIRS'?Math.sin(time*1.7+index)*4+Math.sin(time*4+index)*1.7:Math.sin(time*15+index*2)*2.5+Math.sin(time*36+index)*1.6+Math.sin(time*68+index*4)*1.2;amplitude+=Math.sin(time*123+index)*.7;if(!state.processed&&state.mode!=='fNIRS')amplitude+=Math.exp(-((time-(3+index*.28))**2)/.015)*7;const point=y-amplitude*(state.processed?.65:1);if(pixel===0)ctx.moveTo(left+pixel,point);else ctx.lineTo(left+pixel,point);}}ctx.stroke();});
+  for(let tick=0;tick<=10;tick++){const x=left+plotWidth*tick/10;ctx.strokeStyle=colors.grid;ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.fillStyle=colors.text;ctx.fillText((startTime+duration*tick/10).toFixed(duration<.1?4:duration<1?3:duration<10?1:0),x-2,height-5);}
+  labels.slice(0,channelCount).forEach((label,index)=>{const y=top+rowHeight*(index+.5);ctx.fillStyle=colors.text;ctx.fillText(label,1,y+3);ctx.strokeStyle=colors.grid;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();const selected=Boolean(preview)&&label===state.selectedChannel;ctx.strokeStyle=selected?colors.accent:state.processed?colors.accent:colors.traces[index%colors.traces.length];ctx.lineWidth=selected?1.8:1;ctx.globalAlpha=preview&&!selected?.75:1;ctx.beginPath();if(series?.[index]?.length){const values=series[index];const center=values.reduce((sum,value)=>sum+value,0)/values.length;const peak=Math.max(...values.map(value=>Math.abs(value-center)),Number.EPSILON);values.forEach((value,sample)=>{const x=left+plotWidth*sample/Math.max(1,values.length-1),point=y-(value-center)/peak*rowHeight*.36;if(sample===0)ctx.moveTo(x,point);else ctx.lineTo(x,point);});}else{for(let pixel=0;pixel<=plotWidth;pixel++){const time=pixel/plotWidth*10;let amplitude=state.mode==='fNIRS'?Math.sin(time*1.7+index)*4+Math.sin(time*4+index)*1.7:Math.sin(time*15+index*2)*2.5+Math.sin(time*36+index)*1.6+Math.sin(time*68+index*4)*1.2;amplitude+=Math.sin(time*123+index)*.7;if(!state.processed&&state.mode!=='fNIRS')amplitude+=Math.exp(-((time-(3+index*.28))**2)/.015)*7;const point=y-amplitude*(state.processed?.65:1);if(pixel===0)ctx.moveTo(left+pixel,point);else ctx.lineTo(left+pixel,point);}}ctx.stroke();});
   ctx.globalAlpha=1;const annotations=state.current?.inspection?.structure_report?.import_config?.external_annotations||[],visibleAnnotations=annotations.filter(item=>Number(item.onset)>=startTime&&Number(item.onset)<=startTime+duration),annotationStride=Math.max(1,Math.ceil(visibleAnnotations.length/500));
-  visibleAnnotations.forEach((item,index)=>{if(index%annotationStride)return;const x=left+plotWidth*(Number(item.onset)-startTime)/Math.max(duration,Number.EPSILON);ctx.save();ctx.setLineDash([3,3]);ctx.strokeStyle='#d08a32';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.restore();if(index<40){ctx.fillStyle='#9a641f';ctx.font='8px Segoe UI';const text=String(item.description||'').slice(0,24);ctx.fillText(text,Math.min(width-right-ctx.measureText(text).width,Math.max(left,x+3)),top+9+(index%2)*10);}});
+  visibleAnnotations.forEach((item,index)=>{if(index%annotationStride)return;const x=left+plotWidth*(Number(item.onset)-startTime)/Math.max(duration,Number.EPSILON);ctx.save();ctx.setLineDash([3,3]);ctx.strokeStyle=colors.warning;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,top);ctx.lineTo(x,height-bottom);ctx.stroke();ctx.restore();if(index<40){ctx.fillStyle=colors.warning;ctx.font='9px Consolas';const text=String(item.description||'').slice(0,24);ctx.fillText(text,Math.min(width-right-ctx.measureText(text).width,Math.max(left,x+3)),top+9+(index%2)*10);}});
   $('#signal-caption').textContent=preview?t('signal.realCaption',{count:channelCount,duration:duration.toFixed(duration<1?3:1)}):t('signal.caption');$('#signal-unit').textContent=t('signal.amplitude',{unit:preview?.unit||templates[state.mode].unit});$('.signal-card .pill').textContent=preview?t('badge.real'):t('badge.synthetic');$('.chart-footer span:first-child').textContent=preview?t('signal.realDisclaimer'):t('signal.disclaimer');
   canvas.setAttribute('aria-label',preview?t(state.processed?'signal.processedAria':'signal.rawAria'):t('signal.syntheticAria'));
   renderChannelDetail(preview);
@@ -844,19 +872,30 @@ $('#close-settings').addEventListener('click',()=>$('#settings-dialog').close())
 async function checkBackend(){
   if(state.backend==='demo'){setConnectionState('demo',t('status.demo'));return;}
   setConnectionState('checking',t('status.checking'));
-  try{const response=await fetch(`${state.url}/ping`,{signal:AbortSignal.timeout(4000)});if(!response.ok)throw new Error(`HTTP ${response.status}`);setConnectionState('online',t('status.online'));await ensureSession();await openSession(state.session);}
+  try{const response=await fetch(`${state.url}/ping`,{signal:AbortSignal.timeout(4000)});if(!response.ok)throw new Error(`HTTP ${response.status}`);setConnectionState('online',t('status.online'));await window.desktop?.syncModelConfig?.(state.url);await ensureSession();await openSession(state.session);}
   catch{setConnectionState('offline',t('status.offline'));}
 }
 function setConnectionState(status,label){$('#connection-status').textContent=label;$('#backend-dot').dataset.status=status;}
-$('#settings-form').addEventListener('submit',async event=>{event.preventDefault();if(state.sending)return toast(t('toast.wait'));const selectedBackend=$('#backend-mode').value;if(selectedBackend==='backend'){try{await globalThis.NeuroModelSettings?.save();}catch(error){return toast(error.message);}}state.backend=selectedBackend;state.url=$('#backend-url').value;localStorage.setItem('neuroflow-connection',JSON.stringify({backend:state.backend,url:state.url}));$('#agent-mode').textContent=state.backend==='demo'?t('agent.demo'):t('agent.backend');$('#settings-dialog').close();await checkBackend();toast(t('toast.saved'));});
+$('#settings-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(state.sending)return toast(t('toast.wait'));
+  const selectedBackend=$('#backend-mode').value;
+  const modelChanged=globalThis.NeuroModelSettings?.hasChanges();
+  if(selectedBackend==='backend'||modelChanged){try{await globalThis.NeuroModelSettings?.save();}catch(error){return toast(error.message);}}
+  state.backend=selectedBackend;state.url=$('#backend-url').value;
+  localStorage.setItem('neuroflow-connection',JSON.stringify({backend:state.backend,url:state.url}));
+  $('#agent-mode').textContent=state.backend==='demo'?t('agent.demo'):t('agent.backend');
+  // Keep the settings open so applied/failed status is visible after saving.
+  if(selectedBackend==='demo'&&!modelChanged)$('#settings-dialog').close();
+  await checkBackend();
+});
 $('#new-session').addEventListener('click',()=>createSession().catch(error=>toast(error.message)));
 
 // 深浅主题和侧栏状态保存在本机，重启 Electron 后仍保持用户选择。
-function applyAppearance(){const theme=localStorage.getItem('neuroflow-theme')||'light',collapsed=localStorage.getItem('neuroflow-sidebar')==='collapsed';document.documentElement.dataset.theme=theme;document.body.classList.toggle('sidebar-collapsed',collapsed);$('#theme-toggle').textContent=theme==='dark'?'☀':'☾';$('#sidebar-toggle').title=collapsed?t('sidebar.expand'):t('sidebar.collapse');}
-$('#theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('neuroflow-theme',next);applyAppearance();});
+function applyAppearance(){const theme=localStorage.getItem('neuroflow-theme')==='light'?'light':'dark',collapsed=localStorage.getItem('neuroflow-sidebar')==='collapsed';document.documentElement.dataset.theme=theme;document.body.classList.toggle('sidebar-collapsed',collapsed);$('#theme-toggle').textContent=theme==='dark'?'☀':'☾';$('#sidebar-toggle').title=collapsed?t('sidebar.expand'):t('sidebar.collapse');window.NeuroTheme.refresh();document.dispatchEvent(new Event('neuroflow:themechange'));}
+$('#theme-toggle').addEventListener('click',()=>{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';localStorage.setItem('neuroflow-theme',next);applyAppearance();drawSignal();renderQuality();});
 $('#sidebar-toggle').addEventListener('click',()=>{const collapsed=!document.body.classList.contains('sidebar-collapsed');localStorage.setItem('neuroflow-sidebar',collapsed?'collapsed':'expanded');applyAppearance();requestAnimationFrame(drawSignal);});
 $('#language-toggle').addEventListener('click',()=>i18n.setLocale(i18n.getLocale()==='en'?'zh-CN':'en'));
 document.addEventListener('neuroflow:localechange',refreshLocale);
 new ResizeObserver(drawSignal).observe($('#signal-canvas'));
 try{const saved=JSON.parse(localStorage.getItem('neuroflow-connection')||'null');if(saved?.backend)state.backend=saved.backend;if(saved?.url)state.url=saved.url;}catch{}
-bindI18n();applyAppearance();setMode('EEG');setResponseMode(state.responseMode);renderLists();refreshLocale();checkBackend();appendMessage('assistant',i18n.getLocale()==='en'?'Hello, I am the NeuroFlow assistant.\n\nImport an EEG or fNIRS dataset to inspect metadata and run local preprocessing. MEG metadata inspection is available; its preprocessing pipeline is still being implemented.':'你好，我是 NeuroFlow 助手。\n\n你可以导入 EEG 或 fNIRS 数据读取元数据并运行本地预处理。MEG 目前支持元数据解析，预处理流程仍在实现中。');
+bindI18n();applyAppearance();setMode('EEG');setResponseMode(state.responseMode);renderLists();refreshLocale();checkBackend();appendMessage('assistant',i18n.getLocale()==='en'?'Hello, I am the NeuroFlow assistant.\n\nChoose EEG, MEG, fNIRS, PPG or Sleep scoring in the sidebar, import a recording and confirm its structure. Ask about the current page or request analysis; check tool records and plots for the results.':'你好，我是 NeuroFlow 助手。\n\n从侧栏选择 EEG、MEG、fNIRS、PPG 或睡眠标注，导入记录并确认数据结构。你可以询问当前页面的内容或要求执行分析，通过工具记录和图表查看实际结果。');

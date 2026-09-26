@@ -19,6 +19,12 @@ func TestWorkspaceToolBoundary(t *testing.T) {
 		{"help", "", "manage_preprocessing_task", `{"action":"resume"}`, true},
 		{"history", "eeg-1", "run_neuro_analysis", `{"dataset_id":"eeg-1"}`, true},
 		{"datasets", "eeg-1", "inspect_dataset", `{"dataset_id":"eeg-1"}`, false},
+		{"datasets", "eeg-1", "run_neuro_analysis", `{"dataset_id":"eeg-1","analysis_type":"quality"}`, false},
+		{"history", "eeg-1", "run_neuro_analysis", `{"dataset_id":"eeg-1","analysis_type":"summary","save_output":true}`, false},
+		{"history", "eeg-1", "run_neuro_analysis", `{"dataset_id":"eeg-1","analysis_type":"full"}`, true},
+		{"history", "eeg-1", "run_neuro_analysis", `{"dataset_id":"other","analysis_type":"quality"}`, true},
+		{"datasets", "", "run_neurokit_analysis", `{}`, true},
+		{"history", "eeg-1", "run_neurokit_analysis", `{"dataset_id":"eeg-1","method":"gfp"}`, false},
 		{"help", "", "query_internal_docs", `{"query":"how to import CSV"}`, false},
 	}
 	for _, test := range tests {

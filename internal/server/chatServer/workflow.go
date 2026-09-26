@@ -28,7 +28,10 @@ func planWorkspaceTurn(ctx context.Context, question, datasetID string) turnPlan
 		if scope.Page == "ppg" {
 			return turnPlan{Text: "当前页面为 PPG。只可使用 run_ppg_analysis(action=inspect/analyze) 检查或处理页面已选参数的 PPG 记录；用户要求处理时实际调用 analyze，结果会回填页面。不要调用 EEG/MNE 工具，也不要凭历史数据集 ID 操作。参数未确认时指出需要在页面修改的字段；信息问答不必运行分析。"}
 		}
-		if scope.Page == "help" || scope.Page == "sessions" || scope.Page == "history" || scope.Page == "datasets" {
+		if scope.Page == "history" || scope.Page == "datasets" {
+			return turnPlan{Text: "当前为数据查看页面。对当前绑定文件可调用 inspect_dataset、run_neuro_analysis(summary/quality) 或 NeuroKit2 诊断，核对事实后直接答复；不能执行 full、写入或修改任务。没有绑定文件才请用户选择记录。"}
+		}
+		if scope.Page == "help" || scope.Page == "sessions" {
 			return turnPlan{Text: "当前为 " + scope.Page + " 页面。按本轮页面上下文回答，允许知识检索及当前所选数据集的只读检查。不得自动执行信号处理或修改任务。需要执行时引导用户进入对应信号页面；不要把历史记录当作本轮执行结果。"}
 		}
 	}
@@ -44,14 +47,14 @@ func planTurn(question, datasetID string) turnPlan {
 	if !operation || containsAny(q, "什么是", "为什么", "如何理解", "原理", "区别") {
 		return turnPlan{Text: "信息问答：先核对知识证据；涉及已导入文件事实时读取 inspect_dataset。无需执行的请求不得声称已运行算法。"}
 	}
-	steps := "1. inspect_dataset 核对文件模态、通道、采样率和结构冲突；2. 根据目标及知识依据选择 MNE 或 NeuroKit2 工具；3. 执行后核对工具返回的 completed/skipped/degraded、质量指标和保存状态。"
+	steps := "先核对可用文件事实，再按目标选择 MNE 或 NeuroKit2。完整预处理调用 run_neuro_analysis(full)，后端负责创建、验证和执行任务；已有任务按返回信息继续。只读诊断不受无关任务待确认项影响。执行后核对 completed/skipped/degraded、质量指标和保存状态。"
 	if datasetID == "" {
 		return turnPlan{Text: "数据操作计划：当前会话未绑定 dataset_id。先请求用户导入并绑定文件；在拿到可信文件事实前只可给草案，不可声称完成分析。" + steps, RequiresVerification: true}
 	}
 	if record, ok := dataset.Get(datasetID); ok {
 		requiresConfirmation, _ := record.Inspection.StructureReport["requires_confirmation"].(bool)
 		if len(record.Inspection.StructureConflicts) > 0 || requiresConfirmation {
-			return turnPlan{Text: "数据操作计划：文件结构存在冲突，先持久化待确认项并暂停执行。dataset_id=" + datasetID + "。" + steps, RequiresVerification: true}
+			return turnPlan{Text: "文件结构需要复核：先 inspect_dataset 列出具体冲突并保存必要待确认项；依赖不可信采样率、单位或矩阵结构的计算暂停，元数据解释和知识查询继续。dataset_id=" + datasetID + "。" + steps, RequiresVerification: true}
 		}
 		if record.Inspection.EventsRequireConfirmation {
 			steps += "事件字典仍需研究者确认；执行 Epoch/ERP/解码前必须先确认事件含义。"
@@ -79,11 +82,17 @@ func reflectTurn(answer string, trace []toolinput.ToolResult) string {
 	}
 	lower := strings.ToLower(answer)
 	performed, saved := false, false
+	preprocessed := false
 	allCompleted := true
 	var beforeScore, afterScore *float64
 	for _, result := range trace {
 		if result.Succeeded && (result.Name == "run_neuro_analysis" || result.Name == "run_neurokit_analysis" || result.Name == "run_ppg_analysis") {
 			performed = true
+			// 新记录明确区分计算类型。旧测试/调用方未设置 AnalysisType 时保留兼容；
+			// 新的 summary/quality 成功不能证明滤波、ICA 或完整预处理成功。
+			if result.Name == "run_neuro_analysis" && (result.AnalysisType == "full" || result.AnalysisType == "") {
+				preprocessed = true
+			}
 			saved = saved || result.Saved
 			if result.BeforeScore != nil && result.AfterScore != nil {
 				beforeScore, afterScore = result.BeforeScore, result.AfterScore
@@ -96,6 +105,10 @@ func reflectTurn(answer string, trace []toolinput.ToolResult) string {
 		}
 	}
 	claim := containsAny(lower, "已完成预处理", "已经完成预处理", "已执行预处理", "已经执行预处理", "预处理完成", "已完成滤波", "已经完成滤波", "已计算gfp", "已经计算gfp", "已检测坏道", "preprocessing completed", "preprocessing is complete", "filtering completed", "gfp calculated", "bad channels detected")
+	processingClaim := containsAny(lower, "已完成预处理", "已经完成预处理", "已执行预处理", "已经执行预处理", "预处理完成", "已完成滤波", "已经完成滤波", "preprocessing completed", "preprocessing is complete", "filtering completed")
+	if processingClaim && performed && !preprocessed {
+		return localized(answer, "本轮仅有诊断计算记录，不能确认已执行预处理。请保留实际诊断结果，并将尚未执行的处理步骤明确列出。", "Only diagnostic computation was recorded this turn. Report its findings and distinguish processing steps that have not been executed.")
+	}
 	if claim && !performed {
 		return localized(answer, "本轮没有可核验的分析工具成功记录，因此不能确认已完成处理。请检查数据集是否已导入、结构是否已确认，并重新发起分析。", "No successful analysis tool call was recorded in this turn, so completion cannot be confirmed. Check the imported dataset and its structure, then run the analysis again.")
 	}

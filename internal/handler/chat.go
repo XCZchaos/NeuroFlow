@@ -6,13 +6,11 @@ import (
 	"OnCallAgent/internal/server/dataset"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cloudwego/eino/compose"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -121,10 +119,7 @@ func (c *chatHandler) Chat() gin.HandlerFunc {
 
 		message, err := c.chat.Chat(ctx.Request.Context(), request.Question, request.ID, request.ResponseMode)
 		if err != nil {
-			ctx.JSON(http.StatusBadGateway, gin.H{
-				"code":    "AGENT_CALL_FAILED",
-				"message": "Agent 调用失败，请检查模型服务和后端日志",
-			})
+			ctx.JSON(http.StatusBadGateway, describeAgentFailure(err, request.ResponseMode, false))
 			return
 		}
 		ctx.JSON(http.StatusOK, gin.H{"message": message})
@@ -271,11 +266,7 @@ func (c *chatHandler) ChatSream() gin.HandlerFunc {
 			// 不关闭共享事件通道：取消时仍可能有工具正在退出并报告结束。
 			// 消费方收到终止事件即退出，cancel 负责释放剩余发送者。
 			if err := c.chat.ChatSream(requestCtx, request.Question, request.ID, request.ResponseMode, &messages, &done); err != nil {
-				failure := gin.H{"code": "AGENT_STREAM_FAILED", "message": "Agent 流式调用失败"}
-				if errors.Is(err, compose.ErrExceedMaxSteps) {
-					failure = gin.H{"code": "AGENT_STEP_LIMIT", "message": "本轮已达到 Agent 交互预算。已完成的操作不会撤销，请检查工具记录后决定是否继续；复杂任务可选择深度分析。"}
-				}
-				toolinput.EmitStream(requestCtx, "error", failure)
+				toolinput.EmitStream(requestCtx, "error", describeAgentFailure(err, request.ResponseMode, true))
 				return
 			}
 			toolinput.EmitStream(requestCtx, "done", "[DONE]")

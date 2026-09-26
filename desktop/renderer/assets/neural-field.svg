@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 160" fill="none">
+  <!-- Decorative signal/electrode illustration. No acquired data or measurements. -->
+  <g stroke="#39bfd0" stroke-width=".6" opacity=".22">
+    <path d="M0 40h360M0 80h360M0 120h360M40 0v160M80 0v160M120 0v160M160 0v160M200 0v160M240 0v160M280 0v160M320 0v160"/>
+    <circle cx="260" cy="80" r="59"/><circle cx="260" cy="80" r="42"/><path d="M260 10v140M190 80h140"/>
+  </g>
+  <g stroke="#53dae1" opacity=".6" stroke-width="1.3">
+    <path d="M0 81h20l7-7 8 18 9-42 11 65 11-75 12 43 8-7 9 5h26l8-5 8 12 8-24 7 29 9-13h22"/>
+    <path d="M223 48l37-10 33 22-6 42-39 22-32-29 7-47 37 42 33-30M216 95l44-57 27 64-64-54M248 124l12-34 27 12M260 90l-44 5" opacity=".5"/>
+  </g>
+  <g fill="#61e4e4">
+    <circle cx="223" cy="48" r="3"/><circle cx="260" cy="38" r="3"/><circle cx="293" cy="60" r="3"/><circle cx="287" cy="102" r="3"/><circle cx="248" cy="124" r="3"/><circle cx="216" cy="95" r="3"/><circle cx="260" cy="90" r="4"/>
+  </g>
+  <path d="M190 22v-8h9M321 22v-8h-9M190 139v8h9M321 139v8h-9" stroke="#93b3f6" opacity=".5"/>
+</svg>

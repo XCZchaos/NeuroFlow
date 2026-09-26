@@ -49,6 +49,12 @@ func (t *workspaceTool) InvokableRun(ctx context.Context, arguments string, opts
 		}
 		toolinput.EmitStream(ctx, "status", map[string]any{"kind": "tool", "id": callID, "tool": t.name, "state": status, "elapsed_ms": time.Since(started).Milliseconds()})
 	}()
+	if toolinput.IsModelProbe(ctx) && t.name != "inspect_ui_component" {
+		return `{"ok":false,"code":"MODEL_PROBE_READ_ONLY","message":"Model diagnostics permit only inspect_ui_component."}`, nil
+	}
+	if toolinput.IsAnswerRepair(ctx) && !answerRepairToolAllowed(t.name, arguments) {
+		return `{"ok":false,"code":"ANSWER_REPAIR_READ_ONLY","message":"Correct the answer using existing tool results and evidence lookup. Do not rerun analysis or modify tasks, settings or files."}`, nil
+	}
 	// “解释此组件”是纯问答入口：即使模型误选分析工具，也不能执行处理。
 	if ui := toolinput.CurrentUIContext(ctx); ui != nil && ui.ExplainOnly {
 		var input map[string]any
@@ -67,6 +73,21 @@ func (t *workspaceTool) InvokableRun(ctx context.Context, arguments string, opts
 	}
 	return t.InvokableTool.InvokableRun(toolinput.WithToolCallID(ctx, callID), arguments, opts...)
 }
+
+// 使用显式白名单，新增动作工具不会自动获得“修正回答”阶段的执行权限。
+func answerRepairToolAllowed(name, arguments string) bool {
+	switch name {
+	case "query_internal_docs", "inspect_dataset", "inspect_ui_component", "audit_knowledge_evidence":
+		return true
+	case "manage_preprocessing_task":
+		var input struct {
+			Action string `json:"action"`
+		}
+		return json.Unmarshal([]byte(arguments), &input) == nil && input.Action == "get"
+	default:
+		return false
+	}
+}
 func workspaceToolError(scope toolinput.Workspace, name, arguments string) string {
 	if name == "run_ppg_analysis" {
 		if scope.Page != "ppg" {
@@ -84,7 +105,11 @@ func workspaceToolError(scope toolinput.Workspace, name, arguments string) strin
 	}
 	switch name {
 	case "run_neuro_analysis", "run_neurokit_analysis", "suggest_sleep_stages", "manage_preprocessing_task":
-		if scope.Page != "eeg" && scope.Page != "meg" && scope.Page != "fnirs" && scope.Page != "sleep" {
+		// 管理/历史页已有明确绑定文件时允许诊断；它们仍不能启动完整预处理。
+		analysisType, _ := input["analysis_type"].(string)
+		diagnostic := name == "run_neurokit_analysis" || (name == "run_neuro_analysis" && isDiagnosticAnalysis(analysisType))
+		reviewDiagnostic := diagnostic && (scope.Page == "datasets" || scope.Page == "history")
+		if !reviewDiagnostic && scope.Page != "eeg" && scope.Page != "meg" && scope.Page != "fnirs" && scope.Page != "sleep" {
 			return "This page is for review and questions. Open the matching signal workspace before executing data operations"
 		}
 		if scope.DatasetID == "" {

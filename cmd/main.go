@@ -11,6 +11,7 @@ import (
 	"OnCallAgent/internal/server/chatServer"
 	"OnCallAgent/internal/server/dataset"
 	"OnCallAgent/internal/server/model"
+	"OnCallAgent/internal/server/modelruntime"
 	"OnCallAgent/pkg/config"
 	"OnCallAgent/pkg/log"
 	"context"
@@ -87,7 +88,12 @@ func main() {
 	defer dataset.CloseRegistry()
 	// 初始化gin
 	r := gin.Default()
-	router.InitRouter(ctx, r, log, config, runnerRAG, runner, chatModel, run, memoryStore)
+	controlToken, err := modelruntime.ControlToken("./data/model-control.token")
+	if err != nil {
+		panic(err)
+	}
+	models := modelruntime.New(config, runner, chatModel, run)
+	router.InitRouter(ctx, r, log, config, runnerRAG, models, controlToken, run, memoryStore)
 	// 启动 HTTP 服务
 	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 	if err = r.Run(addr); err != nil {

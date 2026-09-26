@@ -90,7 +90,11 @@ func (u chatServer) newReactAgentLambda(ctx context.Context) (node *compose.Lamb
 	// 每次调用独立设置图预算，避免修改共享 Agent 造成并发会话串模式。
 	// 12/30 是图节点执行预算，不是 12/30 次工具，更不限制 Python 内部算法步骤。
 	options := func(ctx context.Context, opts []einoagent.AgentOption) []einoagent.AgentOption {
-		return append(opts, einoagent.WithComposeOptions(compose.WithRuntimeMaxSteps(toolinput.CurrentResponsePolicy(ctx).MaxGraphSteps)))
+		budget := toolinput.CurrentResponsePolicy(ctx).MaxGraphSteps
+		if toolinput.IsAnswerRepair(ctx) {
+			budget = toolinput.AnswerRepairMaxSteps
+		}
+		return append(opts, einoagent.WithComposeOptions(compose.WithRuntimeMaxSteps(budget)))
 	}
 	generate := func(ctx context.Context, messages []*schema.Message, opts ...einoagent.AgentOption) (*schema.Message, error) {
 		return agent.Generate(ctx, messages, options(ctx, opts)...)

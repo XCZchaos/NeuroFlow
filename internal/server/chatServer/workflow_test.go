@@ -62,3 +62,15 @@ func TestReflectTurnRejectsInventedKnowledgeCitation(t *testing.T) {
 		t.Fatalf("invented knowledge ID must not pass review: %q", got)
 	}
 }
+
+func TestDiagnosisCannotProvePreprocessing(t *testing.T) {
+	for _, kind := range []string{"summary", "quality"} {
+		trace := []toolinput.ToolResult{{Name: "run_neuro_analysis", AnalysisType: kind, Succeeded: true}}
+		if reflectTurn("已完成预处理", trace) == "已完成预处理" {
+			t.Fatal("diagnostic counted as preprocessing")
+		}
+		if got := reflectTurn("已取得质量诊断结果。", trace); got != "已取得质量诊断结果。" {
+			t.Fatal("valid diagnostic result blocked")
+		}
+	}
+}

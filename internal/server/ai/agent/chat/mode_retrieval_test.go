@@ -17,6 +17,15 @@ type recordingRetriever struct {
 	fail    bool
 }
 
+func TestAnswerRepairDoesNotRepeatAutomaticRetrieval(t *testing.T) {
+	r := &recordingRetriever{}
+	ctx := toolinput.WithAnswerRepair(context.Background())
+	out, err := modeRetrieval(r)(ctx, &UserMessage{Query: "EEG filtering", ResponseMode: "deep"})
+	if err != nil || len(r.queries) != 0 || out["evidence_status"] == "" {
+		t.Fatalf("repair repeated primary searches: %+v %v", r.queries, err)
+	}
+}
+
 func (r *recordingRetriever) Retrieve(ctx context.Context, q string, opts ...retriever.Option) ([]*schema.Document, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()

@@ -20,7 +20,7 @@ import (
 // cannot set validation/status/result itself. Session identity comes from HTTP,
 // never from model-provided parameters.
 type TaskInput struct {
-	Action    string              `json:"action" jsonschema:"description=start/get/answer/validate/resume/cancel/retry. start saves a plan and questions; answer records current user declarations; validate rereads the file; resume executes only validated work; retry requires explicit user permission after failure/interruption"`
+	Action    string              `json:"action" jsonschema:"enum=start,enum=get,enum=answer,enum=validate,enum=resume,enum=cancel,enum=retry,description=start saves a plan and questions; get reads current state; answer records current user declarations; validate rereads the file; resume executes only validated work; retry requires an explicit user request after failure/interruption"`
 	Revision  int                 `json:"revision,omitempty" jsonschema:"description=Current revision returned by get; required for all mutations except start"`
 	Fields    []taskstate.Field   `json:"fields,omitempty" jsonschema:"description=Questions for missing fields: sampling_rate_hz,unit,layout,channels,montage,event_dictionary,channel_count,device,reference,research_goal"`
 	Answers   map[string]any      `json:"answers,omitempty" jsonschema:"description=Values explicitly supplied by the user. channels is an array of name/type/reference/drop objects; event_dictionary is a mapping"`
@@ -29,14 +29,15 @@ type TaskInput struct {
 }
 
 func PreprocessingTaskTool() (tool.InvokableTool, error) {
-	return utils.InferTool("manage_preprocessing_task", "持久化预处理任务：保存待确认字段、用户原话、验证结果和待执行步骤。信息不足时 start 后向用户提问；下轮 get/answer/validate/resume。等待状态禁止直接调用 run_neuro_analysis 绕过。", func(ctx context.Context, in TaskInput) (string, error) {
+	return utils.InferTool("manage_preprocessing_task", `管理已有持久化预处理任务或仅保存计划。新完整分析优先用 run_neuro_analysis(full)，无需手动串联 start/validate/resume。
+查询示例：{"action":"get"}。补充示例：{"action":"answer","revision":3,"user_quote":"单位uV","answers":{"unit":"uV"}}；revision 必须取自最新 task.revision，原话必须来自当前用户消息。
+返回 status、completed、pending_fields、next_action 和 task 证据。pending_fields 只列未答字段；验证冲突看 task.validation。ok=true 不代表分析完成，只有 completed=true 才能报告任务完成。ready 时按用户已有执行意图继续 resume；等待期间可做独立只读检查。`, func(ctx context.Context, in TaskInput) (string, error) {
 		state, err := manageTask(ctx, in)
 		if err != nil {
-			raw, _ := json.Marshal(map[string]any{"ok": false, "message": err.Error(), "next_action": "get task and explain the missing information or failure to the user"})
+			raw, _ := json.Marshal(map[string]any{"ok": false, "status": "error", "completed": false, "code": "TASK_ACTION_FAILED", "message": err.Error(), "retryable": false, "next_action": "Read the current task with get, then use its revision and feedback to correct this action or ask for missing information. Do not repeat the unchanged request."})
 			return string(raw), nil
 		}
-		raw, err := json.Marshal(map[string]any{"ok": true, "task": state})
-		return string(raw), err
+		return marshalTaskObservation(state)
 	})
 }
 
@@ -91,7 +92,7 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 		if layout, _ := record.Inspection.StructureReport["layout"].(string); strings.Contains(layout, "inferred") {
 			add("layout", "数据矩阵是每行一个采样点，还是每行一个通道？")
 		}
-		if record.Inspection.EventsRequireConfirmation && slices.Contains(in.Plan.EnabledSteps, "epoching") {
+		if record.Inspection.EventsRequireConfirmation && analysisNeedsEvents(*in.Plan) {
 			add("event_dictionary", "请说明各事件编码对应的实验含义。")
 		}
 		plan, _ := json.Marshal(in.Plan)
@@ -209,6 +210,9 @@ func manageTask(ctx context.Context, in TaskInput) (*taskstate.State, error) {
 			save := true
 			if plan.SaveOutput != nil {
 				save = *plan.SaveOutput
+			}
+			if isDiagnosticAnalysis(plan.AnalysisType) {
+				save = false
 			}
 			if toolinput.ExplicitNoSave(scope.UserMessage) {
 				save = false
@@ -339,7 +343,7 @@ func validateTask(ctx context.Context, state *taskstate.State, commit bool) (map
 		return fail(err)
 	}
 	// Unknown event semantics cannot be cleared merely by saying 'confirmed'.
-	if reviewed.Inspection.EventsRequireConfirmation && slices.Contains(plan.EnabledSteps, "epoching") {
+	if reviewed.Inspection.EventsRequireConfirmation && analysisNeedsEvents(plan) {
 		dictionary, ok := config["event_dictionary"].(map[string]any)
 		if !ok || len(dictionary) == 0 {
 			return fail(fmt.Errorf("event_dictionary is required before epoching"))

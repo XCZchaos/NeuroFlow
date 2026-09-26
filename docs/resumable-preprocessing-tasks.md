@@ -12,7 +12,7 @@
 
 ## Agent 工具与恢复顺序
 
-新增 `manage_preprocessing_task`，操作如下：
+新的完整分析使用 `run_neuro_analysis(analysis_type=full)`，后端自动串联创建、验证、执行与核验；缺少必要信息时保存任务并返回等待状态。`manage_preprocessing_task` 用于继续已有任务或只保存计划，操作如下：
 
 | action | 作用 |
 | --- | --- |
@@ -26,7 +26,9 @@
 
 除 start/get 外，操作必须携带最新 `revision`。数据库使用条件更新防止并发覆盖及重复执行。执行前先持久化运行状态；HTTP 取消后的失败结果也会尝试使用独立的短超时保存。进程重启将运行中的任务标为 interrupted，不自动重跑可能已保存文件的操作。
 
-正常对话：用户要求处理 → Agent 保存计划并询问 → 用户补充 → Agent answer → validate → resume → 报告实际结果。用户原本已授权处理时，提示词要求验证成功后在该轮继续调用 resume，无需重复询问许可；这仍是模型驱动的工具循环，不是后台自主调度器。
+信息完整时：用户要求处理 → Agent 调用完整分析入口 → 后端完成工作流 → 返回实际结果。仅在存在必要缺项时询问：用户补充 → Agent answer → validate → resume。用户原本已授权处理时，验证成功后在该轮继续调用 resume，无需重复询问许可；这仍是模型驱动的工具循环，不是后台自主调度器。
+
+两种任务入口共享 `status`、`completed`、`pending_fields`、`next_action` 和原有 `task` 证据。顶层未答字段不包含已经提交的答案；答案冲突由 `task.validation` 与阻塞步骤说明。`ok=true` 不能当作处理成功，只有 `completed=true` 才表示任务完成。详见[工具反馈与工程原则](agent-engineering.md)。
 
 答案示例：
 
@@ -48,16 +50,17 @@
 - `internal/server/chatServer/sqlite_memory.go`：数据库初始化和会话删除关联。
 - `internal/server/chatServer/chat.go`：普通和流式聊天均注入当前任务，不依赖被压缩的历史消息。
 - `internal/server/ai/agent/chat/new_react_agent.go`、`chat_template.go`：注册工具并定义询问/恢复协议。
-- `internal/server/ai/tools/python_analysis.go`：有未完成任务时阻止直接工具调用绕过验证。
+- `internal/server/ai/tools/preprocessing_request.go`、`task_observation.go`：完整分析入口与统一工具反馈。
+- `internal/server/ai/tools/python_analysis.go`：完整分析经过任务验证；独立 summary/quality 诊断不修改待确认任务，不导出处理文件。
 - `internal/handler/chat.go`、`internal/router/init.go`：`GET /sessions/:id/task` 返回最新任务；无任务时为 `{"task":null}`。
 
 完整审计和分析结果由工具/API 按需读取，不在每一轮自动注入。问题和答案保持在上下文中，以免摘要压缩后忘记待办。
 
 ## 当前边界
 
-本次未新增 Electron 任务面板；用户通过现有聊天提交答案，Agent 用自然语言反馈状态，前端可使用上述 GET 接口展示任务详情。真实分析复用原有结果缓存，因此原有波形预览可继续取到分析结果。
+Electron 可以查询并展示持久化任务状态，用户通过聊天提交答案，工具执行过程由真实后端事件反馈。真实分析复用结果缓存，波形预览可继续取到分析结果。
 
-数据集注册表仍为内存存储。后端重启后任务不会丢失，但数据集 ID 失效时必须重新导入、取消旧任务并为新数据集建立计划；禁止自动把旧答案套到新句柄。尚不能为完全无法导入的文件建立此类任务。更换执行计划同样采用取消后新建，已完成任务不能重复 resume。
+数据集注册信息已持久化到 SQLite，启动时按源路径、文件大小和修改时间验证并恢复有效 ID；这不是文件内容哈希校验。源文件缺失或变化导致 ID 失效时，须重新导入、取消旧任务并为新数据集建立计划，不能自动把旧答案套到新句柄。尚不能为完全无法导入的文件建立此类任务。更换执行计划同样采用取消后新建，已完成任务不能重复 resume。
 
 `save_output=false` 禁止保存预处理输出文件，但任务状态和通过验证的导入配置仍会持久化。结构确认修改的是读取配置，不覆盖原始采集数据。
 

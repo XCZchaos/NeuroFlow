@@ -18,7 +18,7 @@ import (
 // 本机模拟模型连续请求只读工具。验证预算确实传入 Eino，而不是只写在提示词里。
 // 同时走完整外层图，覆盖 prompt 的 evidence_status 合并和简单路径无检索。
 func TestActualReActBudgetDiffersByMode(t *testing.T) {
-	for _, mode := range []string{"quick", "deep"} {
+	for _, mode := range []string{"quick", "deep", "repair"} {
 		t.Run(mode, func(t *testing.T) {
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +36,9 @@ func TestActualReActBudgetDiffersByMode(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			ctx = toolinput.WithResponseMode(ctx, mode)
+			if mode == "repair" {
+				ctx = toolinput.WithAnswerRepair(toolinput.WithResponseMode(ctx, "deep"))
+			}
 			ctx = toolinput.WithWorkspace(ctx, toolinput.Workspace{Page: "help"})
 			ctx = toolinput.WithUIContext(ctx, &toolinput.UIContext{Version: 1, Page: "help", FocusedComponentID: "help", ExplainOnly: true, Components: []toolinput.UIComponent{{ID: "help", Title: "Help", State: map[string]any{}}}})
 			u := NewChatServer(nil, &config.Config{OpenAI: config.OpenAIConfig{APIBase: server.URL + "/v1", APIKey: "local-test-only", Model: "test", MaxTokens: 128}})
@@ -44,7 +47,7 @@ func TestActualReActBudgetDiffersByMode(t *testing.T) {
 				t.Fatal(err)
 			}
 			out, err := runner.Invoke(ctx, &UserMessage{Query: "hello", ResponseMode: mode})
-			if mode == "quick" {
+			if mode == "quick" || mode == "repair" {
 				if !errors.Is(err, compose.ErrExceedMaxSteps) {
 					t.Fatalf("quick budget not enforced (%d calls): %v", calls.Load(), err)
 				}

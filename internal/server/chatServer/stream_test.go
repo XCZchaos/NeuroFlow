@@ -24,7 +24,7 @@ func TestVerifiedTurnStreamsBeforeEOFAndReplacesDraft(t *testing.T) {
 	legacy := make(chan string, 4)
 	finished := make(chan error, 1)
 	go func() {
-		finished <- server.forwardStream(ctx, reader, &toolinput.Trace{}, true, "stream", "请预处理", &legacy)
+		finished <- server.forwardStream(ctx, reader, &toolinput.Trace{}, true, "stream", "请预处理", &legacy, nil)
 	}()
 	writer.Send(&schema.Message{Content: "已完成预处理，并已保存预处理文件。"}, nil)
 	select {

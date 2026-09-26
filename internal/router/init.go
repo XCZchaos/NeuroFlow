@@ -2,26 +2,24 @@ package router
 
 import (
 	"OnCallAgent/internal/handler"
-	"OnCallAgent/internal/server/ai/agent/chat"
 	"OnCallAgent/internal/server/batch"
 	"OnCallAgent/internal/server/batchstate"
 	"OnCallAgent/internal/server/chatServer"
 	knowledgeindex "OnCallAgent/internal/server/knowledge_index"
+	"OnCallAgent/internal/server/modelruntime"
 	"OnCallAgent/internal/server/plan"
 	"OnCallAgent/pkg/config"
 	"context"
 
-	"github.com/cloudwego/eino-ext/components/model/openai"
 	qdrant_retriever "github.com/cloudwego/eino-ext/components/retriever/qdrant"
 	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/schema"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
 
-func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config *config.Config, runner compose.Runnable[document.Source, bool], runnerChat compose.Runnable[*chat.UserMessage, *schema.Message], model *openai.ChatModel, retriever *qdrant_retriever.Retriever, memory chatServer.MemoryStore) {
+func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config *config.Config, runner compose.Runnable[document.Source, bool], models *modelruntime.Manager, controlToken string, retriever *qdrant_retriever.Retriever, memory chatServer.MemoryStore) {
 	//cors
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowOrigins = []string{"*"}
@@ -39,18 +37,27 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 	uploderHandler := handler.NewFileUploader("./uploads/", uploder)
 	r.POST("/upload", uploderHandler.Upload())
 	//对话
-	chater := chatServer.NewChatServer(loger, runnerChat, memory)
-	chaterHandler := handler.NewChatHandler(chater)
-	r.POST("/chat", chaterHandler.Chat())
-	r.POST("/chatStream", chaterHandler.ChatSream())
-	r.GET("/sessions", chaterHandler.ListSessions())
-	r.POST("/sessions", chaterHandler.CreateSession())
-	r.DELETE("/sessions/:id", chaterHandler.DeleteSession())
-	r.GET("/sessions/:id/task", chaterHandler.SessionTask())
-	r.GET("/sessions/:id/messages", chaterHandler.SessionMessages())
-	r.PUT("/sessions/:id/dataset", chaterHandler.BindDataset())
-	r.GET("/sessions/:id/memory", chaterHandler.GetSessionMemory())
-	r.PUT("/sessions/:id/memory", chaterHandler.UpdateSessionMemory())
+	// Pin the complete generation per HTTP request, including answer repair.
+	chaterHandler := func(method func(handler.ChatHandler) gin.HandlerFunc, needsModel bool) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			snapshot := models.Snapshot()
+			if needsModel && snapshot.Config.OpenAI.APIKey == "" {
+				c.JSON(503, gin.H{"code": "MODEL_DISABLED", "message": "API Key is empty; save a model configuration first"})
+				return
+			}
+			method(handler.NewChatHandler(chatServer.NewChatServer(loger, snapshot.Runner, memory)))(c)
+		}
+	}
+	r.POST("/chat", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.Chat() }, true))
+	r.POST("/chatStream", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.ChatSream() }, true))
+	r.GET("/sessions", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.ListSessions() }, false))
+	r.POST("/sessions", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.CreateSession() }, false))
+	r.DELETE("/sessions/:id", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.DeleteSession() }, false))
+	r.GET("/sessions/:id/task", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.SessionTask() }, false))
+	r.GET("/sessions/:id/messages", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.SessionMessages() }, false))
+	r.PUT("/sessions/:id/dataset", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.BindDataset() }, false))
+	r.GET("/sessions/:id/memory", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.GetSessionMemory() }, false))
+	r.PUT("/sessions/:id/memory", chaterHandler(func(h handler.ChatHandler) gin.HandlerFunc { return h.UpdateSessionMemory() }, false))
 	r.POST("/agent/preprocessing/draft", handler.NeuroPreprocessingDraft())
 	r.GET("/knowledge/catalog", handler.KnowledgeCatalog())
 	r.POST("/knowledge/audit", handler.AuditKnowledgeEvidence())
@@ -85,7 +92,16 @@ func InitRouter(ctx context.Context, r *gin.Engine, loger *logrus.Logger, config
 		r.DELETE("/batches/:id", handler.DeleteBatch(batches))
 	}
 	//运维
-	planer := plan.NewPlanServer(*config, model, loger, retriever)
-	planerH := handler.NewPlanHandler(planer)
-	r.GET("/plan", planerH.Plan())
+	r.GET("/plan", func(c *gin.Context) {
+		snapshot := models.Snapshot()
+		if snapshot.Config.OpenAI.APIKey == "" {
+			c.JSON(503, gin.H{"code": "MODEL_DISABLED", "message": "API Key is empty"})
+			return
+		}
+		handler.NewPlanHandler(plan.NewPlanServer(snapshot.Config, snapshot.Model, loger, retriever)).Plan()(c)
+	})
+	control := r.Group("/model", handler.ModelControlAuth(controlToken))
+	control.GET("/runtime", handler.ModelStatus(models))
+	control.PUT("/runtime", handler.ApplyModelSettings(models))
+	control.POST("/test-agent", handler.TestActiveAgent(models))
 }

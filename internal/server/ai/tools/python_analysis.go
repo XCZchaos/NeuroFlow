@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,7 +35,7 @@ func InvalidateDatasetAnalysis(id string) { latestAnalysis.Delete(id) }
 // 不进入参数；dataset_id 由后端解析为用户已经导入的本地文件。
 type NeuroAnalysisInput struct {
 	DatasetID          string   `json:"dataset_id" jsonschema:"description=已导入数据集的 dataset_id"`
-	AnalysisType       string   `json:"analysis_type" jsonschema:"description=summary 基础指标；quality 增加质量检查；full 执行 EEG 自动坏道、参考、ICA 与质量对比；默认 full"`
+	AnalysisType       string   `json:"analysis_type,omitempty" jsonschema:"enum=summary,enum=quality,enum=full,description=summary 基础指标；quality 只读质量诊断；full 由后端自动创建、验证并执行持久化预处理任务，缺必要信息时返回待确认项；默认 full"`
 	StartSeconds       float64  `json:"start_seconds,omitempty" jsonschema:"description=分析起点（秒），默认为 0"`
 	EndSeconds         float64  `json:"end_seconds,omitempty" jsonschema:"description=分析终点（秒），0 表示记录末尾；长数据应分段调用"`
 	LeftChannel        string   `json:"left_channel,omitempty" jsonschema:"description=计算 EEG 左右不对称时的左侧通道名，例如 F3"`
@@ -52,24 +53,31 @@ type NeuroAnalysisInput struct {
 	SSSMode            string   `json:"sss_mode,omitempty" jsonschema:"description=MEG 空间滤波：none、sss 或 tsss；必须由设备元数据支持"`
 	STDuration         float64  `json:"st_duration,omitempty" jsonschema:"description=tSSS 时间窗秒，默认 10"`
 	EmptyRoomDatasetID string   `json:"empty_room_dataset_id,omitempty" jsonschema:"description=已导入的 MEG 空房记录 dataset_id，用于估计环境噪声 SSP"`
-	SaveOutput         *bool    `json:"save_output,omitempty" jsonschema:"description=是否保存处理后的 FIF 和审计文件；默认 true；用户明确要求不保存时必须设为 false"`
+	SaveOutput         *bool    `json:"save_output,omitempty" jsonschema:"description=full 是否保存处理后的 FIF 和审计文件，默认 true；用户要求不保存时设 false；summary/quality 始终不保存处理文件"`
 }
 
 // RunNeuroAnalysisTool 执行 NeuroFlow 自己的 Python/MNE 算法，并把紧凑的指标
 // JSON 返回给 Agent。只有此工具成功返回的内容才能被表述为“已经计算”。
 func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 	return utils.InferTool("run_neuro_analysis",
-		"使用本地 Python/MNE 执行真实 EEG、MEG 或 fNIRS 分析。EEG 支持自动参数搜索、Epoch、ERP、时频与交叉验证解码；MEG 支持 SSS/tSSS、空房 SSP、陷波与带通；fNIRS 支持光密度、TDDR、Beer-Lambert 和滤波。需要 dataset_id；缺失事件、设备变换或空房记录时必须如实说明。",
+		`使用本地 Python/MNE 执行 EEG、MEG 或 fNIRS 分析。summary/quality 只读且不保存处理文件；full 自动衔接后端任务，只有 completed=true 才表示任务完成，缺信息返回 pending_fields 和 next_action。
+质量检查示例：{"dataset_id":"当前已绑定ID","analysis_type":"quality"}。仅滤波且不保存：{"dataset_id":"当前已绑定ID","analysis_type":"full","enabled_steps":["bandpass_filter"],"save_output":false}。只问方案时用 create_neuro_preprocessing_draft；已有未完成任务用 manage_preprocessing_task 继续。
+EEG 支持参数搜索、Epoch、ERP、时频与折内解码；MEG 支持 SSS/tSSS、空房 SSP、陷波与带通；fNIRS 支持光密度、TDDR、Beer-Lambert 和滤波。依赖事件、设备变换或空房记录的步骤必须具备对应数据；工具结果不支持的结论不能声称已计算。`,
 		func(ctx context.Context, input NeuroAnalysisInput) (string, error) {
-			// A waiting task must not be bypassed by a second model tool call.
-			if scope, ok := taskstate.FromContext(ctx); ok {
-				state, err := scope.Store.Get(ctx, scope.SessionID)
+			// 完整分析只有一个模型入口；状态机仍在后端执行，不能绕过导入校验。
+			// 只读诊断不修改待确认任务，事件字典未确认也不影响非事件诊断。
+			if _, scoped := taskstate.FromContext(ctx); scoped && (strings.TrimSpace(input.AnalysisType) == "" || strings.EqualFold(strings.TrimSpace(input.AnalysisType), "full")) {
+				state, err := runPreprocessingRequest(ctx, input)
 				if err != nil {
-					return "", err
+					code, next := "PREPROCESSING_WORKFLOW_FAILED", "Inspect the bound dataset and task state; correct the specific prerequisite before continuing. Do not repeat the unchanged request."
+					var continuation *taskContinuationError
+					if errors.As(err, &continuation) {
+						code, next = "TASK_REQUIRES_RESUME", "manage_preprocessing_task get; continue the existing task instead of starting another"
+					}
+					raw, _ := json.Marshal(map[string]any{"ok": false, "status": "error", "completed": false, "code": code, "message": err.Error(), "next_action": next, "retryable": false})
+					return string(raw), nil
 				}
-				if state != nil && state.Active() {
-					return `{"ok":false,"code":"TASK_REQUIRES_RESUME","message":"Use manage_preprocessing_task get/answer/validate/resume; pending task blocks direct execution"}`, nil
-				}
+				return marshalTaskObservation(state)
 			}
 			saveOutput := true
 			if input.SaveOutput != nil {
@@ -80,17 +88,21 @@ func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 			if toolinput.ExplicitNoSave(toolinput.UserText(ctx)) {
 				saveOutput = false
 			}
+			if isDiagnosticAnalysis(input.AnalysisType) {
+				saveOutput = false // 只读诊断永远不导出处理文件，即使模型误填 true。
+			}
 			result, err := ExecuteNeuroAnalysis(ctx, input, saveOutput)
 			if err != nil {
 				// 数据缺少事件、坐标或参数不适用属于工具层可解释失败。把错误作为
 				// 结构化观察结果交还 ReAct Agent，使模型可以说明原因并调整参数，
 				// 而不是让 Eino ToolsNode 终止整个 SSE 对话流。
 				failure, _ := json.Marshal(map[string]any{
-					"ok":         false,
-					"code":       "NEURO_ANALYSIS_FAILED",
-					"message":    err.Error(),
-					"dataset_id": input.DatasetID,
-					"retryable":  true,
+					"ok":          false,
+					"code":        "NEURO_ANALYSIS_FAILED",
+					"message":     err.Error(),
+					"dataset_id":  input.DatasetID,
+					"retryable":   false,
+					"next_action": "Inspect the specific failure. Correct parameters using verified facts or ask only for missing information; do not repeat the same request unchanged.",
 				})
 				return string(failure), nil
 			}
@@ -99,6 +111,27 @@ func RunNeuroAnalysisTool() (tool.InvokableTool, error) {
 			clean, _ := json.Marshal(result)
 			return string(clean), nil
 		})
+}
+
+func isDiagnosticAnalysis(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "summary" || value == "quality"
+}
+
+// 事件含义仅阻塞依赖事件的步骤。省略步骤表示默认完整流程，仍要检查事件前提。
+func analysisNeedsEvents(input NeuroAnalysisInput) bool {
+	if isDiagnosticAnalysis(input.AnalysisType) {
+		return false
+	}
+	if len(input.EnabledSteps) == 0 {
+		return true
+	}
+	for _, step := range []string{"epoching", "baseline", "autoreject", "erp", "time_frequency", "decoding"} {
+		if slices.Contains(input.EnabledSteps, step) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExecuteNeuroAnalysis 是 Agent function call 和本地 HTTP 接口共用的确定性执行层。
@@ -114,6 +147,9 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 	}
 	if analysisType != "summary" && analysisType != "quality" && analysisType != "full" {
 		return nil, fmt.Errorf("analysis_type 必须是 summary、quality 或 full")
+	}
+	if isDiagnosticAnalysis(analysisType) {
+		saveOutput = false
 	}
 	// The Agent may propose full preprocessing, but only the persisted workflow
 	// can execute it. Summary/quality remain read-only diagnostic operations.
@@ -149,11 +185,7 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 		return nil, fmt.Errorf("数据结构仍有冲突，请先在 Electron 的数据结构确认页面核对后再运行")
 	}
 	// 默认 full 流程也可能执行 Epoch；不能因模型省略 enabled_steps 就绕过事件确认。
-	eventSteps := len(input.EnabledSteps) == 0
-	for _, step := range []string{"epoching", "baseline", "autoreject", "erp", "time_frequency", "decoding"} {
-		eventSteps = eventSteps || slices.Contains(input.EnabledSteps, step)
-	}
-	if inspection.EventsRequireConfirmation && analysisType == "full" && eventSteps {
+	if inspection.EventsRequireConfirmation && analysisType == "full" && analysisNeedsEvents(input) {
 		return nil, fmt.Errorf("事件字典尚未确认；事件分段前请先在数据结构确认页面确认事件含义")
 	}
 	script, err := neuroAnalysisScriptPath()
@@ -301,7 +333,7 @@ func ExecuteNeuroAnalysis(ctx context.Context, input NeuroAnalysisInput, saveOut
 	if output, ok := result["output"].(map[string]any); ok {
 		saved, _ = output["saved"].(bool)
 	}
-	toolinput.Record(ctx, toolinput.ToolResult{Name: "run_neuro_analysis", DatasetID: input.DatasetID, Succeeded: true, Saved: saved, Steps: steps, BeforeScore: beforeScore, AfterScore: afterScore})
+	toolinput.Record(ctx, toolinput.ToolResult{Name: "run_neuro_analysis", DatasetID: input.DatasetID, AnalysisType: analysisType, Succeeded: true, Saved: saved, Steps: steps, BeforeScore: beforeScore, AfterScore: afterScore})
 	// 前端只拿项目内相对路径。Electron 主进程会再次验证该路径必须位于 outputs 下，
 	// 因而渲染进程既能定位结果，也不会获得任意文件系统访问能力。
 	if output, ok := result["output"].(map[string]any); ok && output != nil {

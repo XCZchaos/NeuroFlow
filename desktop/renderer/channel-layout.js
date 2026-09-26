@@ -5,7 +5,7 @@ let layoutRenderState=[];
 const layoutText=(zh,en)=>i18n.getLocale()==='en'?en:zh;
 function renderChannelLayout(){
   // 平移波形不会改变电极和通道列表；避免每帧销毁、创建整个 SVG 与按钮列表。
-  const next=[state.current?.inspection,state.current?.inspection?.structure_report,state.current?.inspection?.structure_report?.channel_positions,state.selectedChannel,state.singleChannel,layoutSearch,layoutFilter,i18n.getLocale()];
+  const next=[state.current?.inspection,state.current?.inspection?.structure_report,state.current?.inspection?.structure_report?.channel_positions,state.selectedChannel,state.singleChannel,layoutSearch,layoutFilter,i18n.getLocale(),document.documentElement.dataset.theme];
   if(document.getElementById('channel-layout-panel')&&next.every((value,index)=>value===layoutRenderState[index]))return;
   layoutRenderState=next;
   let panel=document.getElementById('channel-layout-panel');
@@ -33,7 +33,7 @@ function renderChannelLayout(){
   for(const c of channels){const p=known.get(c.name);if(!p||c.drop)continue;
     const group=shape('g',{'data-channel':c.name,tabindex:'0',role:'button','aria-label':c.name,'aria-pressed':String(state.selectedChannel===c.name)});
     const selected=state.singleChannel&&state.selectedChannel===c.name;
-    group.append(shape('circle',{cx:160+p.x*scale,cy:150-p.y*scale,r:selected?8:5,fill:selected?'#e6a03d':refs.has(c.name)?'#8064b2':'#16846d'}));
+    group.append(shape('circle',{cx:160+p.x*scale,cy:150-p.y*scale,r:selected?8:5,fill:selected?'var(--warning)':refs.has(c.name)?'var(--trace-2)':'var(--nf-primary)'}));
     const label=shape('text',{x:168+p.x*scale,y:154-p.y*scale,'font-size':10,fill:'currentColor'});label.textContent=c.name+(refs.has(c.name)?' ★':'');group.append(label);
     group.onclick=()=>selectLayoutChannel(c);group.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();selectLayoutChannel(c);}};svg.append(group);
   }

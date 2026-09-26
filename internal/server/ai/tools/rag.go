@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -95,5 +96,18 @@ func retrieve(ctx context.Context, query RetrieveRequest) (docs []*schema.Docume
 func RetrieveTool() (tool.InvokableTool, error) {
 	return utils.InferTool("query_internal_docs",
 		"检索 BCI 专家知识。外层按模式和问题类型执行零至两轮检索；初次证据不足、包含多个处理阶段或需要补查具体约束时，用本工具针对性补检索。查询包含模态、范式、阶段和问题。检索结果不代表已经处理信号。",
-		retrieve)
+		func(ctx context.Context, request RetrieveRequest) (any, error) {
+			// 检索不可用也是一种观察结果。交回模型决定如何说明证据边界，
+			// 不让可恢复的知识服务故障直接终止整个 ReAct/SSE 对话。
+			lookupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			docs, err := retrieve(lookupCtx, request)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err != nil {
+				return map[string]any{"ok": false, "code": "KNOWLEDGE_UNAVAILABLE", "message": "本次知识检索未取得证据；请说明缺失依据，继续可验证的部分，不要原样反复重试。", "retryable": false}, nil
+			}
+			return docs, nil
+		})
 }

@@ -1,25 +1,47 @@
-.help-view{padding:0;min-height:680px;overflow:hidden}.help-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:30px 32px 24px;background:linear-gradient(135deg,#f5fbf8,#edf7f3);border-bottom:1px solid var(--border)}
-.help-heading h2{margin:0;color:#21483d;font-size:25px}.help-heading p{margin:8px 0 0;color:var(--muted)}.help-heading input{width:min(350px,42%);padding:11px 14px;border:1px solid #cadfd7;border-radius:9px;background:#fff;color:#365a4d}.help-layout{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start}
-.help-toc{position:sticky;top:74px;max-height:calc(100vh - 110px);overflow:auto;padding:20px 14px;border-right:1px solid var(--border);background:#fafcfb}.help-toc a{display:block;padding:8px 10px;border-radius:7px;color:#667d74;text-decoration:none;font-size:10px;line-height:1.4}.help-toc a:hover{background:#e9f5f0;color:#137a61}
-.help-articles{min-width:0;padding:8px 34px 42px}.help-articles article{scroll-margin-top:94px;padding:27px 0;border-bottom:1px solid var(--border)}.help-articles article:last-child{border:0}.help-articles h3{margin:0 0 8px;color:#225e50;font-size:16px}.help-articles p{color:#60766d;font-size:11px;line-height:1.95;white-space:pre-line}.help-summary{margin:0 0 17px!important;color:#84968f!important}.help-articles article[hidden]{display:none}
-@media(max-width:900px){.help-layout{grid-template-columns:1fr}.help-toc{position:static;display:flex;gap:5px;max-height:none;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}.help-toc a{white-space:nowrap}.help-articles{padding:5px 24px 34px}.help-heading{align-items:stretch;flex-direction:column}.help-heading input{width:100%}}
-@media(max-width:560px){.help-heading{padding:24px 20px}.help-articles{padding:4px 18px 28px}}
-/* 说明内容较长：目录、正文和操作列表分别排版，窄工作区改用横向目录。 */
-.help-view{container-type:inline-size}
-.help-heading>div{min-width:0}.help-heading h2{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
-.help-version{display:inline-block;padding:4px 9px;border:1px solid #c7ded5;border-radius:7px;font-size:12px;font-weight:650;color:#14735e;background:#fff}
-.help-heading p{font-size:13px;line-height:1.8}.help-heading input{min-width:0;flex-shrink:0}
-.help-toc a{font-size:12px}.help-toc a[hidden]{display:none}
-.help-articles p,.help-articles li{font-size:13px;line-height:1.9;overflow-wrap:anywhere}
-.help-articles h4{font-size:14px;color:#315f52;margin:20px 0 8px}
-.help-articles ul,.help-articles ol{padding-left:23px;color:#60766d}.help-articles li{padding-left:3px;margin:10px 0}
-.help-empty{padding:24px 0}.help-articles [hidden]{display:none}
-@container(max-width:680px){
- .help-layout{grid-template-columns:1fr}.help-toc{position:static;display:flex;gap:5px;max-height:none;overflow:auto;border-right:0;border-bottom:1px solid var(--border)}
- .help-toc a{white-space:nowrap}.help-heading{align-items:stretch;flex-direction:column;padding:24px}.help-heading input{width:100%}.help-articles{padding:4px 24px 30px}
+/* Inherit the workspace palette in both themes; keep long content inside its column. */
+/* clip preserves the card edge without creating a hidden scroll container:
+ * chapter links must scroll the page, otherwise the search header can disappear. */
+.help-view{padding:0;min-height:680px;overflow:clip;container-type:inline-size}
+:root[data-theme] #help-view{padding:0}
+.help-view [hidden]{display:none!important}
+.help-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:28px;border-bottom:1px solid var(--border);background:var(--inset)}
+.help-heading>div{min-width:0}.help-heading h2{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:0;font-size:25px;color:var(--nf-ink)}
+.help-version{display:inline-block;padding:4px 9px;border:1px solid var(--border);border-radius:5px;font:12px var(--mono);color:var(--nf-primary)}
+.help-heading p{margin:9px 0 0;font-size:13px;line-height:1.8;color:var(--nf-subtle)}
+.help-heading input{width:min(300px,40%);min-width:0;flex-shrink:0;padding:11px 14px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--nf-text)}
+.help-shortcuts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 25px;border-bottom:1px solid var(--border);font-size:11px}
+.help-shortcuts>span{color:var(--nf-subtle);margin-right:4px}.help-shortcuts a{padding:6px 9px;border:1px solid var(--border);border-radius:5px;color:var(--nf-primary);background:var(--nf-soft);text-decoration:none;line-height:1.6}
+.help-shortcuts a:hover{border-color:var(--nf-primary)}
+.app-content .help-layout{display:grid;grid-template-columns:210px minmax(0,1fr);align-items:start}
+.help-toc{position:sticky;top:74px;max-height:calc(100vh - 110px);overflow:auto;padding:18px 12px;border-right:1px solid var(--border);background:var(--inset)}
+.help-search-status{margin:0 8px 16px;font-size:11px;color:var(--nf-subtle);font-family:var(--mono)}
+.help-toc-group{margin-bottom:20px}.help-toc-group:last-child{margin-bottom:0}
+.help-toc-group h3{margin:0 8px 5px;font-size:10px;line-height:1.7;font-weight:600;color:var(--nf-primary);letter-spacing:.03em}
+.help-toc a{display:block;padding:8px;border-radius:5px;font-size:12px;line-height:1.5;color:var(--nf-subtle);text-decoration:none}
+:root[data-theme] .help-view .help-toc a{font-size:12px}
+.help-toc a:hover,:root[data-theme] .help-toc a[aria-current]{background:var(--nf-soft);color:var(--nf-primary)}
+.help-articles{min-width:0;padding:6px 28px 30px}.help-articles article{scroll-margin-top:94px;padding:26px 0;border-bottom:1px solid var(--border)}
+.help-articles article:focus{outline:none}.help-articles article:focus-visible{outline:2px solid var(--nf-primary);outline-offset:4px}
+.help-articles h3{margin:0 0 9px;font-size:18px;color:var(--nf-ink)}.help-articles h4{margin:0 0 9px;font-size:13px;color:var(--nf-ink)}
+.help-articles p,.help-articles li{font-size:13px;line-height:1.9;overflow-wrap:anywhere;white-space:pre-line;color:var(--nf-text)}
+:root[data-theme] .help-view .help-articles :is(p,li){font-size:13px}
+:root[data-theme] .help-articles .help-section-label{margin:0 0 8px;font:10px var(--mono);color:var(--nf-primary);letter-spacing:.05em}
+:root[data-theme] .help-articles .help-summary{margin:0 0 20px;color:var(--nf-subtle)}
+.help-block{margin:18px 0}.help-block:last-child{margin-bottom:0}.help-block p{margin:0}
+.help-articles ul,.help-articles ol{margin:0;padding-left:22px}.help-articles li{padding-left:4px;margin:9px 0}.help-steps li::marker{color:var(--nf-primary);font-weight:650}
+.help-result,.help-note,.help-example{padding:15px 17px;border-radius:6px;background:var(--inset);border:1px solid var(--border)}
+.help-result{border-left:3px solid var(--nf-primary);background:var(--nf-soft)}
+.help-example{border-style:dashed}.help-example blockquote{margin:0;color:var(--nf-text);font-size:12px;line-height:1.9;white-space:pre-line;overflow-wrap:anywhere}
+.help-code pre{max-width:100%;overflow:auto;margin:0;padding:16px;background:var(--inset);border:1px solid var(--border);border-radius:5px;color:var(--nf-text);line-height:1.8;font:12px/1.8 var(--mono);tab-size:2}
+.help-table{overflow:auto;border:1px solid var(--border);border-radius:6px}.help-table table{width:100%;border-collapse:collapse;font-size:12px;line-height:1.8;color:var(--nf-text)}
+.help-table th,.help-table td{min-width:105px;vertical-align:top;text-align:left;padding:11px 13px;border-bottom:1px solid var(--border);overflow-wrap:anywhere;white-space:pre-line}
+.help-table th{background:var(--inset);font-weight:600;color:var(--nf-ink)}.help-table tbody tr:last-child td{border-bottom:0}.help-table td:first-child{width:32%}
+.help-empty{padding:25px 0}.help-view a:focus-visible,.help-view input:focus-visible,.help-table:focus-visible{outline:2px solid var(--nf-primary);outline-offset:2px}
+/* The Agent dock also narrows the guide at large window widths: use its actual container. */
+@container(max-width:760px){
+ .app-content .help-layout{grid-template-columns:1fr}.help-toc{position:static;max-height:200px;display:flex;flex-wrap:wrap;gap:12px 22px;border-right:0;border-bottom:1px solid var(--border)}
+ .help-search-status{flex-basis:100%;margin:0 8px}.help-toc-group{flex:1 0 175px;margin:0}.help-toc-group h3{margin-top:4px}
+ .help-heading{align-items:stretch;flex-direction:column;gap:16px}.help-heading input{width:100%}.help-shortcuts{gap:6px}
 }
-:root[data-theme="dark"] .help-heading{background:linear-gradient(135deg,#18352e,#142c27)}
-:root[data-theme="dark"] .help-toc,:root[data-theme="dark"] .help-heading input,:root[data-theme="dark"] .help-version{background:#172e28;border-color:#315249;color:#bad9cd}
-:root[data-theme="dark"] .help-heading h2,:root[data-theme="dark"] .help-articles h3,:root[data-theme="dark"] .help-articles h4{color:#d8eae4}
-:root[data-theme="dark"] .help-articles p,:root[data-theme="dark"] .help-articles li,:root[data-theme="dark"] .help-toc a{color:#b8cbc4}
-:root[data-theme="dark"] .help-toc a:hover{background:#214b3e;color:#d8eae4}
+@media(max-width:900px){.app-content .help-layout{grid-template-columns:1fr}.help-heading{align-items:stretch;flex-direction:column}.help-heading input{width:100%}}
+@media(prefers-reduced-motion:reduce){.help-view{scroll-behavior:auto}}

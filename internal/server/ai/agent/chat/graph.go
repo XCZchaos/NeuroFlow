@@ -15,7 +15,14 @@ func (u chatServer) BuildChatAgent(ctx context.Context) (r compose.Runnable[*Use
 		InputToChat  = "InputToChat"
 	)
 	g := compose.NewGraph[*UserMessage, *schema.Message]()
-	_ = g.AddLambdaNode(ModeEvidence, compose.InvokableLambdaWithOption(modeRetrieval(u.retriever)), compose.WithNodeName("ModeEvidence"))
+	// 不把 nil 的具体指针直接装入接口：该接口会变成“类型存在、值为空”，
+	// 绕过 modeRetrieval 的 nil 判断并在调用 Qdrant 时 panic。未配置检索器
+	// 应当返回无知识证据的观察结果，让模型继续处理可验证的部分。
+	var evidenceReader knowledgeRetriever
+	if u.retriever != nil {
+		evidenceReader = u.retriever
+	}
+	_ = g.AddLambdaNode(ModeEvidence, compose.InvokableLambdaWithOption(modeRetrieval(evidenceReader)), compose.WithNodeName("ModeEvidence"))
 	chatTemplateKeyOfChatTemplate := newChatTemplateLambda(ctx)
 
 	_ = g.AddChatTemplateNode(ChatTemplate, chatTemplateKeyOfChatTemplate)

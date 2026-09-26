@@ -108,6 +108,21 @@ func TestGetServerAddr(t *testing.T) {
 	}
 }
 
+func TestExplicitlyEmptyEnvironmentKeyDoesNotRestoreFileSecret(t *testing.T) {
+	t.Setenv("NEUROFLOW_LLM_API_KEY", "")
+	filename := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(filename, []byte(`{"openai":{"api_key":"old-file-key"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := InitConfig(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OpenAI.APIKey != "" {
+		t.Fatal("cleared key fell back to file configuration")
+	}
+}
+
 func TestGetEmbedderAddr(t *testing.T) {
 	cfg := &Config{
 		Embedder: EmbedderConfig{Host: "embedder", Port: 11434},

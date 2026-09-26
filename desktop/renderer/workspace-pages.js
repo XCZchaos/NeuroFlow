@@ -24,6 +24,8 @@
     dock.setAttribute('aria-label', en?'Shared NeuroFlow Agent':'全局 NeuroFlow Agent');
   }
   function mount(page) {
+    document.documentElement.dataset.workspace=page;
+    global.NeuroTheme.refresh();
     // Legacy code can continue targeting #workspace-view. Only its parent page
     // changes; scientific data and parameters are restored by app.setMode().
     if (modes[page]) document.querySelector(`#${page}-view`).append(document.querySelector('#workspace-view'));

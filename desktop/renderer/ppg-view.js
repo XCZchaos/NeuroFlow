@@ -140,6 +140,7 @@
   function pan(delta) { if (!result) return; left += delta; clamp(); draw(); }
   function zoom(factor) { if (!result) return; const center = left + width / 2; width *= factor; clamp(); left = center - width / 2; clamp(); draw(); }
   function draw() {
+    const colors=global.NeuroTheme.palette();
     if (view.hidden) return;
     const canvas = $('#ppg-canvas'), rect = canvas.getBoundingClientRect();
     if (!rect.width) return;
@@ -151,21 +152,21 @@
     const x = time => 62 + (time - left) / width * (w - 80);
     const plot = (times, values, offset, label, color, peaks = []) => {
       const visible = []; for (let i = 0; i < times.length; i++) if (times[i] >= left && times[i] <= left + width) visible.push(i);
-      ctx.fillStyle = '#58776f'; ctx.font = '12px sans-serif'; ctx.fillText(label, 12, offset + 15);
+      ctx.fillStyle = colors.text; ctx.font = '12px sans-serif'; ctx.fillText(label, 12, offset + 15);
       let lo = Infinity, hi = -Infinity; for (const i of visible) { lo = Math.min(lo, values[i]); hi = Math.max(hi, values[i]); }
       if (!visible.length) return;
       const span = Math.max(hi - lo, Math.abs(hi) * .01, 1e-12), y = value => offset + 117 - (value - lo) / span * 78;
       ctx.font = '10px monospace'; ctx.fillText(hi.toPrecision(3), 2, offset + 42); ctx.fillText(lo.toPrecision(3), 2, offset + 119);
-      ctx.strokeStyle = '#dbe8e3'; ctx.lineWidth = 1;
+      ctx.strokeStyle = colors.grid; ctx.lineWidth = 1;
       for (let j = 0; j <= 4; j++) { const px = 62 + j / 4 * (w - 80); ctx.beginPath(); ctx.moveTo(px, offset + 28); ctx.lineTo(px, offset + 124); ctx.stroke(); ctx.fillText((left + width * j / 4).toFixed(1), px - 12, offset + 138); }
       ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.beginPath();
       visible.forEach((i, index) => { if (index) ctx.lineTo(x(times[i]), y(values[i])); else ctx.moveTo(x(times[i]), y(values[i])); }); ctx.stroke();
-      ctx.fillStyle = '#cc794d';
+      ctx.fillStyle = colors.warning;
       peaks.filter(p => p.time >= left && p.time <= left + width).forEach(p => { ctx.beginPath(); ctx.arc(x(p.time), y(p.amplitude), 3, 0, Math.PI * 2); ctx.fill(); });
     };
-    plot(result.waveform.time, result.waveform.raw, 0, t('original'), '#91a59e');
-    plot(result.waveform.time, result.waveform.cleaned, 153, t('cleaned'), '#128372', result.peaks);
-    plot(result.heart_rate.time, result.heart_rate.bpm, 306, t('heart'), '#9771bd');
+    plot(result.waveform.time, result.waveform.raw, 0, t('original'), colors.muted);
+    plot(result.waveform.time, result.waveform.cleaned, 153, t('cleaned'), colors.accent, result.peaks);
+    plot(result.heart_rate.time, result.heart_rate.bpm, 306, t('heart'), colors.traces[1]);
   }
   function download(kind) {
     if (!result) return;
@@ -187,6 +188,7 @@
   $('#ppg-export').onclick = () => download('json'); $('#ppg-export-csv').onclick = () => download('csv');
   new ResizeObserver(() => requestAnimationFrame(draw)).observe($('#ppg-canvas'));
   document.addEventListener('neuroflow:localechange', translate);
+  document.addEventListener('neuroflow:themechange', draw);
   function applyResult(data){
     result=data;metadata=data;left=data.start_seconds;width=Math.min(10,data.end_seconds-left);
     $('#ppg-rate').value=data.sampling_rate_hz;
@@ -205,11 +207,13 @@
     const data=await response.json();if(!response.ok||!data.ok)throw Error(data.message||`HTTP ${response.status}`);
     agentID=data.ppg_id;return agentID;
   }
-  async function syncAgentResult(id){
+  async function syncAgentResult(id,signal){
     if(!id||id!==agentID)return;
-    const response=await fetch(`${global.NeuroFlowWorkspace.backendURL()}/ppg/${encodeURIComponent(id)}/latest`,{signal:AbortSignal.timeout(15000)});
+    signal?.throwIfAborted();
+    const response=await fetch(`${global.NeuroFlowWorkspace.backendURL()}/ppg/${encodeURIComponent(id)}/latest`,{signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});
     if(response.status===404)return;
     const data=await response.json();if(!response.ok)throw Error(data.message||`HTTP ${response.status}`);
+    signal?.throwIfAborted();
     if(id===agentID)applyResult(data);
   }
   global.NeuroPPG = Object.freeze({ activate: () => { translate(); controls(); requestAnimationFrame(draw); },isBusy:()=>busy,
